@@ -186,15 +186,16 @@ function calc(a){
 /* ---------- Состояние и хранение ---------- */
 let S=null, loaded=false, store=null, ref=null, note=null, readOnly=false;
 let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg='Загрузка…', syncCls='local', deferRemote=null;
-const ui={tab:'ration', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null};
+const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[]}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
-  return {v:1, animals:Array.isArray(d.animals)?d.animals:[], feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
-    customFeeds:Array.isArray(d.customFeeds)?d.customFeeds:[], feedOverrides:obj(d.feedOverrides), log:Array.isArray(d.log)?d.log:[]};
+  const arr=(x)=>Array.isArray(x)?x:[];
+  return {v:1, animals:arr(d.animals), feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
+    customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days)};
 }
 const markRation=(a)=>{ if(a) a.rationChanged=todayISO(); };
 const stable=(o)=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((r,k2)=>(r[k2]=v[k2],r),{}):v);
@@ -219,12 +220,19 @@ function save(){
 function mergeData(local, remote){
   const m=clone(local), ids=new Set((m.log||[]).map(e=>e.id));
   for(const e of (remote.log||[])) if(!ids.has(e.id)) m.log.push(e);
+  // дела и учёт: по id, побеждает более свежая правка (updatedAt); удаление — пометка deleted
+  for(const k of ['tasks','money']){
+    const by=new Map((m[k]||[]).map(x=>[x.id,x]));
+    for(const r of (remote[k]||[])){ const l=by.get(r.id); if(!l||(r.updatedAt||0)>(l.updatedAt||0)) by.set(r.id,r); }
+    m[k]=[...by.values()];
+  }
+  m.days=Object.assign({}, remote.days||{}, m.days||{});
   return m;
 }
 async function flush(){
   if(!S) return;
   if(saving){ again=true; return; }
-  if(!session||!meta.farmId||!navigator.onLine){ setSync('local','Сохранено в телефоне — отправлю, когда будет связь'); return; }
+  if(!session||!meta.farmId||!navigator.onLine){ setSync('local','В телефоне · отправлю при связи'); return; }
   saving=true; again=false;
   let retry=false;
   try{
@@ -281,7 +289,20 @@ async function initStore(){
   S=d?normalize(d):null; dirty=!!meta.dirty; loaded=true;
   session=await getSession();
   if(!session){ authView=true; setSync('local','Вход не выполнен'); }
-  render();
+  // Только локальная разработка (npm run dev): #demo — посмотреть экраны без входа, на примерных данных.
+  if(import.meta.env.DEV&&location.hash==='#demo'){ authView=false; if(!S){ S=blank(); seedOurFarm();
+    const td=todayISO(); [['Купить комбикорм',td,'10:00','farm','high'],['Позвонить ветеринару про прививки',addDaysISO(td,-1),null,'farm'],['Оплатить свет',addDaysISO(td,1),null,'home'],['Отвезти яйца деду',addDaysISO(td,3),'15:00','me'],['Убрать в курятнике',null,null,'farm']]
+      .forEach(([title,due,time,sec,prio])=>newTask({title,due,time,sec,prio:prio||'normal',rep:title.startsWith('Оплатить')?'month':'none',remind:time?'1h':'none'})); S.tasks[0].done=false; ui.tab='tasks'; } }
+  // Открыли через «Поделиться» (Gmail, WhatsApp, браузер) — сразу форма нового дела.
+  try{
+    const q=new URLSearchParams(location.search), st=q.get('title'), sx=q.get('text'), su=q.get('url');
+    if(st||sx||su){
+      const first=((st||sx||su||'').split('\n')[0]||'').trim().slice(0,120);
+      ui.tab='tasks'; ui.task='new'; ui.taskDraft={title:first, note:[st&&st!==first?st:'', sx&&sx!==first?sx:'', su||''].filter(Boolean).join('\n'), due:null};
+      history.replaceState(null,'',location.pathname);
+    }
+  }catch(e){}
+  render(); checkReminders();
   if(session) connect();
   onAuth(s=>{ const was=!!session; session=s; if(s&&!was) connect(); });
   window.addEventListener('online',()=>{ if(session&&!farm) connect(); else if(dirty) flush(); });
@@ -365,8 +386,8 @@ function render(){
   const top=note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'';
   document.querySelector('nav.tabs').style.display=authView?'none':'';
   if(authView){ main.innerHTML=top+viewAuth(); return; }
-  if(!S||!S.animals.length){ main.innerHTML=top+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
-  main.innerHTML=top+({ration:viewRation,stock:viewStock,tips:viewTips,journal:viewJournal,herd:viewHerd}[ui.tab])()+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
+  if(ui.tab!=='tasks'&&(!S||!S.animals.length)){ main.innerHTML=top+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
+  main.innerHTML=top+({tasks:viewTasks,ration:viewRation,stock:viewStock,tips:viewTips,journal:viewJournal,herd:viewHerd}[ui.tab])()+(ui.task?taskSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
 }
 function viewAuth(){
   const up=ui.authMode==='up';
@@ -497,6 +518,8 @@ function viewEmpty(){
     <div class="row" style="justify-content:center">${['horse','cow','goat','buck','hens'].map(k=>aniIcon(k,'lg')).join('')}</div>
     <h2>Хозяйство пока пустое</h2>
     <p class="hint">Добавьте животных — приложение посчитает, сколько сена, зерна и других кормов давать каждому в день.</p>
+    <button class="primary" data-act="seed-ours">Наше хозяйство: Шалфей, Тоша, Сметанка, Карамелька, Толик, куры</button>
+    <p class="hint" style="margin:0">или по одному:</p>
     ${addButtons()}
   </div>
   ${session?`<div class="card" style="margin-top:12px"><strong>Вас пригласили в хозяйство?</strong>
@@ -610,7 +633,7 @@ function viewStock(){
     const dl=!known?'<span class="pill warn">остаток не указан</span>':d<=0?'<span class="chip">не расходуется</span>':
       `<span class="pill ${daysLeft<7?'bad':daysLeft<30?'warn':'ok'}">хватит на ${fmt(daysLeft,0)} дн. · до ${addDays(daysLeft)}</span>`;
     return `<article class="card">
-      <div class="card-head"><h3 id="stk-${f.id}">${feedLink(f.id)}</h3>${dl}</div>
+      <div class="card-head"><h3 id="stk-${f.id}">${feedLink(f.id)}</h3><div class="row">${dl}${known&&d>0&&daysLeft<14?`<button class="ghost" data-act="todo-buy" data-feed="${f.id}">В дела</button>`:''}</div></div>
       <div class="stock-grid">
         <div><div class="k">Расход в день</div><div class="v">${fmt(d,d<1?2:1)} кг</div></div>
         <div><div class="k">Остаток сейчас ≈</div><div class="v">${known?fmt(left,0)+' кг':'—'}</div></div>
@@ -985,6 +1008,7 @@ function farmSummary(){
   const tot=S.animals.filter(a=>!a.planned).reduce((s,a)=>s+curCost(a).cost,0); if(tot) lines.push(`Корм стоит ≈ ${money(tot)} в день, ${money(tot*30)} в месяц.`);
   const e=econ(); if(e.milkL) lines.push(`Молоко: ≈ ${fmt(e.milkL,1)} л в день, корм на литр ≈ ${e.milkCostL?money(e.milkCostL):'—'}${S.settings.milkPrice?', продаём по '+money(+S.settings.milkPrice)+'/л':''}.`);
   if(e.eggs) lines.push(`Яйца: ≈ ${fmt(e.eggs,1)} шт в день, корм на яйцо ≈ ${e.eggCost?money(e.eggCost):'—'}${S.settings.eggPrice?', продаём по '+money(+S.settings.eggPrice)+'/шт':''}.`);
+  const ts=tasksSummary(); if(ts) lines.push(ts);
   lines.push('Страна: Латвия. Цены в евро. Сегодня '+todayISO()+'.');
   return lines.join('\n');
 }
@@ -1184,6 +1208,211 @@ function chatSheet(){
   </div></div>`;
 }
 
+/* ---------- Дела (ежедневник) ---------- */
+const SECS={farm:'Хозяйство', home:'Дом', ferma:'Ферма', me:'Личное'};
+const REPS={none:'не повторять', day:'каждый день', week:'каждую неделю', month:'каждый месяц', year:'каждый год'};
+const REMS={none:'без напоминания', at:'в момент срока', '1h':'за 1 час', '1d':'за 1 день'};
+const pad2=(n)=>String(n).padStart(2,'0');
+const isoOf=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+const addDaysISO=(iso,n)=>{ const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return isoOf(d); };
+const dayLabel=(iso)=>{ const t=todayISO(); if(iso===t) return 'Сегодня'; if(iso===addDaysISO(t,1)) return 'Завтра'; if(iso===addDaysISO(t,-1)) return 'Вчера';
+  return new Date(iso+'T12:00:00').toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'}); };
+const liveTasks=()=>((S&&S.tasks)||[]).filter(t=>!t.deleted);
+function nextDue(iso,rep){
+  const d=new Date(iso+'T12:00:00'), day=d.getDate();
+  if(rep==='day') d.setDate(day+1); else if(rep==='week') d.setDate(day+7);
+  else if(rep==='month'){ d.setDate(1); d.setMonth(d.getMonth()+1); d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate())); }
+  else if(rep==='year'){ d.setFullYear(d.getFullYear()+1); }
+  return isoOf(d);
+}
+// «купить комбикорм завтра 10:00», «позвонить ветеринару в пятницу», «оплатить свет 12.11»
+const WDAYS={'понедельник':1,'пн':1,'вторник':2,'вт':2,'среду':3,'среда':3,'ср':3,'четверг':4,'чт':4,'пятницу':5,'пятница':5,'пт':5,'субботу':6,'суббота':6,'сб':6,'воскресенье':0,'вс':0};
+function parseQuick(s){
+  let t=' '+String(s).replace(/\s+/g,' ')+' ', due=null, time=null; const today=todayISO();
+  const take=(re,fn)=>{ const m=t.match(re); if(m&&fn(m)!==false) t=t.replace(m[0],' '); };
+  take(/\s(?:в\s)?(\d{1,2}):(\d{2})(?=[\s,.!?])/i,m=>{ if(+m[1]>23||+m[2]>59) return false; time=pad2(m[1])+':'+m[2]; });
+  take(/\s(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?(?=[\s,!?])/,m=>{ const dd=+m[1], mm=+m[2]; if(!dd||dd>31||!mm||mm>12) return false;
+    let y=m[3]?+(m[3].length===2?'20'+m[3]:m[3]):new Date().getFullYear(); let iso=y+'-'+pad2(mm)+'-'+pad2(dd); if(!m[3]&&iso<today) iso=(y+1)+'-'+pad2(mm)+'-'+pad2(dd); due=iso; });
+  take(/\sпослезавтра(?=[\s,.!?])/i,()=>{ due=addDaysISO(today,2); });
+  take(/\sзавтра(?=[\s,.!?])/i,()=>{ due=addDaysISO(today,1); });
+  take(/\sсегодня(?=[\s,.!?])/i,()=>{ due=today; });
+  take(/\s(?:в|во)?\s?(понедельник|вторник|среду|среда|четверг|пятницу|пятница|субботу|суббота|воскресенье|пн|вт|ср|чт|пт|сб|вс)(?=[\s,.!?])/i,m=>{
+    const w=WDAYS[m[1].toLowerCase()]; const d=new Date(today+'T12:00:00'); let k=(w-d.getDay()+7)%7; if(k===0) k=7; due=addDaysISO(today,k); });
+  take(/\s(?:в|к)\s(\d{1,2})(?:\s?(?:час(?:а|ов)?|ч))?(?=[\s,.!?])/i,m=>{ if(time||+m[1]>23) return false; time=pad2(m[1])+':00'; });
+  if(time&&!due) due=today;
+  let title=t.replace(/\s+/g,' ').replace(/\s+([,.!?])/g,'$1').trim().replace(/^[,.\-–\s]+|[,.\-–\s]+$/g,'');
+  title=title?title[0].toUpperCase()+title.slice(1):'';
+  return {title, due, time};
+}
+function newTask(p){
+  if(!S) S=blank();
+  const t=Object.assign({id:uid(), title:'', sec:ui.sec!=='all'?ui.sec:'farm', due:null, time:null, prio:'normal', rep:'none', remind:'none', note:'', done:false, updatedAt:Date.now()}, p);
+  S.tasks.push(t); return t;
+}
+function toggleDone(id){
+  const t=liveTasks().find(x=>x.id===id); if(!t) return;
+  t.done=!t.done; t.doneAt=t.done?Date.now():null; t.updatedAt=Date.now();
+  if(t.done&&t.rep!=='none'&&t.due&&!t.spawned){ t.spawned=true; newTask({title:t.title, sec:t.sec, due:nextDue(t.due,t.rep), time:t.time, prio:t.prio, rep:t.rep, remind:t.remind, note:t.note}); }
+  save(); render();
+}
+// ---- календарь телефона: Google Календарь и .ics ----
+const icsEsc=(s)=>String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\r?\n/g,'\\n');
+const compact=(iso)=>iso.replace(/-/g,'');
+const RRULE={day:'DAILY',week:'WEEKLY',month:'MONTHLY',year:'YEARLY'};
+function gcalUrl(t){
+  let dates;
+  if(t.time){ const s=compact(t.due)+'T'+t.time.replace(':','')+'00'; const e=new Date(t.due+'T'+t.time+':00'); e.setHours(e.getHours()+1);
+    dates=s+'/'+compact(isoOf(e))+'T'+pad2(e.getHours())+pad2(e.getMinutes())+'00'; }
+  else dates=compact(t.due)+'/'+compact(addDaysISO(t.due,1));
+  const p=new URLSearchParams({action:'TEMPLATE', text:t.title, dates, details:(t.note?t.note+'\n\n':'')+'Из приложения «Рационы подворья» · '+SECS[t.sec], ctz:'Europe/Riga'});
+  if(t.rep!=='none') p.set('recur','RRULE:FREQ='+RRULE[t.rep]);
+  return 'https://calendar.google.com/calendar/render?'+p.toString();
+}
+function icsEvent(t){
+  const L=['BEGIN:VEVENT','UID:'+t.id+'@podvorye','DTSTAMP:'+new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'')];
+  if(t.time){ const s=compact(t.due)+'T'+t.time.replace(':','')+'00'; const e=new Date(t.due+'T'+t.time+':00'); e.setHours(e.getHours()+1);
+    L.push('DTSTART;TZID=Europe/Riga:'+s, 'DTEND;TZID=Europe/Riga:'+compact(isoOf(e))+'T'+pad2(e.getHours())+pad2(e.getMinutes())+'00'); }
+  else L.push('DTSTART;VALUE=DATE:'+compact(t.due), 'DTEND;VALUE=DATE:'+compact(addDaysISO(t.due,1)));
+  L.push('SUMMARY:'+icsEsc(t.title), 'DESCRIPTION:'+icsEsc((t.note?t.note+'\n':'')+SECS[t.sec]));
+  if(t.rep!=='none') L.push('RRULE:FREQ='+RRULE[t.rep]);
+  if(t.remind!=='none'){ const trig=t.time?{at:'-PT0M','1h':'-PT1H','1d':'-P1D'}[t.remind]:{at:'PT9H','1h':'PT8H','1d':'-PT15H'}[t.remind];
+    L.push('BEGIN:VALARM','ACTION:DISPLAY','DESCRIPTION:'+icsEsc(t.title),'TRIGGER:'+trig,'END:VALARM'); }
+  L.push('END:VEVENT'); return L;
+}
+const icsFile=(list)=>['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Podvorye//RU','CALSCALE:GREGORIAN',...list.flatMap(icsEvent),'END:VCALENDAR'].join('\r\n');
+// ---- уведомления на телефоне (пока приложение открыто или свёрнуто) ----
+const LS_NOTI='podvorye-notified-v1';
+function remindAt(t){
+  if(!t.due||t.remind==='none'||t.done||t.deleted) return null;
+  const base=new Date(t.due+'T'+(t.time||'09:00')+':00').getTime();
+  return base-({at:0,'1h':36e5,'1d':864e5}[t.remind]||0);
+}
+async function checkReminders(){
+  if(!S||!('Notification' in window)||Notification.permission!=='granted') return;
+  let seen={}; try{ seen=JSON.parse(localStorage.getItem(LS_NOTI)||'{}'); }catch(e){}
+  const now=Date.now(); let changed=false;
+  for(const t of liveTasks()){
+    const at=remindAt(t), key=t.id+'|'+t.due+'|'+t.time+'|'+t.remind; if(at===null||seen[key]) continue;
+    if(now>=at&&now-at<6*36e5){
+      seen[key]=now; changed=true;
+      try{ const reg=await navigator.serviceWorker.ready;
+        await reg.showNotification(t.title,{body:(t.time?t.time+' · ':'')+SECS[t.sec]+(t.note?' · '+t.note.slice(0,80):''), icon:'./pwa-192x192.png', badge:'./favicon.png', tag:t.id, data:{task:t.id}}); }
+      catch(e){ try{ new Notification(t.title,{body:SECS[t.sec]}); }catch(e2){} }
+    }
+  }
+  if(changed) try{ localStorage.setItem(LS_NOTI, JSON.stringify(seen)); }catch(e){}
+}
+setInterval(checkReminders, 60000);
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') checkReminders(); });
+// ---- экран «Дела» ----
+function taskRow(t){
+  const over=!t.done&&t.due&&(t.due<todayISO()||(t.due===todayISO()&&t.time&&t.time<new Date().toTimeString().slice(0,5)));
+  return `<div class="task ${t.done?'done':''} ${over?'over':''}">
+    <button class="tick" data-act="task-done" data-t="${t.id}" aria-pressed="${!!t.done}" aria-label="${t.done?'Не сделано':'Сделано'}: ${esc(t.title)}">${t.done?'✓':''}</button>
+    <button class="task-body" data-act="task-open" data-t="${t.id}">
+      <span class="task-title">${t.prio==='high'?'<b class="imp">!</b> ':''}${esc(t.title)}</span>
+      <span class="task-meta">${t.due&&ui.tab==='tasks'&&ui.groupDates?esc(dayLabel(t.due))+' · ':''}${t.time?esc(t.time)+' · ':''}${SECS[t.sec]||''}${t.rep!=='none'?' · ↻ '+REPS[t.rep]:''}${t.remind!=='none'?' · 🔔':''}</span>
+    </button></div>`;
+}
+function monthGrid(){
+  const base=ui.day||todayISO(), d0=new Date(base.slice(0,7)+'-01T12:00:00'), first=(d0.getDay()+6)%7, days=new Date(d0.getFullYear(),d0.getMonth()+1,0).getDate();
+  const has=new Set(liveTasks().filter(t=>!t.done&&t.due).map(t=>t.due)), cells=[];
+  for(let i=0;i<first;i++) cells.push('<span></span>');
+  for(let k=1;k<=days;k++){ const iso=base.slice(0,7)+'-'+pad2(k);
+    cells.push(`<button class="cal-d ${iso===todayISO()?'today':''} ${iso===ui.day?'sel':''}" data-act="day-go" data-d="${iso}">${k}${has.has(iso)?'<i></i>':''}</button>`); }
+  return `<div class="cal"><div class="cal-h"><button class="ghost" data-act="month" data-n="-1" aria-label="Прошлый месяц">‹</button><strong>${d0.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</strong><button class="ghost" data-act="month" data-n="1" aria-label="Следующий месяц">›</button></div>
+    <div class="cal-g">${['пн','вт','ср','чт','пт','сб','вс'].map(w=>`<span class="cal-w">${w}</span>`).join('')}${cells.join('')}</div></div>`;
+}
+function viewTasks(){
+  const today=todayISO(), day=ui.day||today, isToday=day===today, sec=ui.sec;
+  const all=liveTasks().filter(t=>sec==='all'||t.sec===sec);
+  const sortT=(a,b)=>(a.due||'9')+(a.time||'99')<(b.due||'9')+(b.time||'99')?-1:1;
+  const open=all.filter(t=>!t.done).sort(sortT);
+  let groups;
+  if(isToday){
+    const wk=addDaysISO(today,7);
+    groups=[['Просрочено',open.filter(t=>t.due&&t.due<today),'over'],['Сегодня',open.filter(t=>t.due===today)],['Завтра',open.filter(t=>t.due===addDaysISO(today,1))],
+      ['На неделе',open.filter(t=>t.due>addDaysISO(today,1)&&t.due<=wk),'dates'],['Без срока',open.filter(t=>!t.due)],
+      ['Сделано сегодня',all.filter(t=>t.done&&t.doneAt&&isoOf(new Date(t.doneAt))===today),'done']];
+  } else groups=[[dayLabel(day),all.filter(t=>t.due===day).sort(sortT)]];
+  const body=groups.filter(g=>g[1].length).map(([h,list,k])=>{ ui.groupDates=k==='dates'||k==='over'; const rows=list.map(taskRow).join(''); ui.groupDates=false;
+    return `<section class="section tgroup ${k||''}"><div class="section-head"><h2>${h}</h2><span class="hint">${list.length}</span></div><div class="card tlist">${rows}</div></section>`; }).join('');
+  const notif='Notification' in window&&Notification.permission!=='granted'&&Notification.permission!=='denied';
+  return `
+  <section class="section">
+    <div class="day-nav"><button class="ghost big-btn" data-act="day-step" data-n="-1" aria-label="Предыдущий день">‹</button>
+      <button class="day-title" data-act="cal-toggle">${esc(dayLabel(day))}${isToday?'':` <span class="hint">· ${new Date(day+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'})}</span>`}</button>
+      <button class="ghost big-btn" data-act="day-step" data-n="1" aria-label="Следующий день">›</button></div>
+    ${ui.cal?monthGrid():''}${isToday?'':'<div class="row" style="justify-content:center"><button class="ghost" data-act="day-go" data-d="'+today+'">← к сегодняшнему дню</button></div>'}
+    <div class="quick"><input id="qa" placeholder="Новое дело: «купить комбикорм завтра 10:00»" enterkeyhint="done" autocomplete="off"><button class="primary" data-act="qa-add" aria-label="Добавить дело">+</button></div>
+    <div class="chips sec-chips">${[['all','Все'],...Object.entries(SECS)].map(([k,l])=>`<button class="chip-btn ${sec===k?'on':''}" data-act="sec" data-s="${k}">${l}</button>`).join('')}</div>
+  </section>
+  ${body||`<div class="card empty"><p class="hint">${isToday?'На сегодня дел нет. Впишите первое дело в строку выше — дату и время можно писать словами.':'На этот день дел нет.'}</p></div>`}
+  <section class="section"><div class="section-head"><h2>Заметка дня</h2><span class="hint">${esc(dayLabel(day))}</span></div>
+    <textarea id="day-note" class="note" rows="3" data-daynote="${day}" placeholder="Что важно помнить в этот день…">${esc((S&&S.days&&S.days[day])||'')}</textarea></section>
+  <section class="section"><div class="row">
+    ${notif?'<button data-act="notif-on">🔔 Включить уведомления</button>':''}
+    ${liveTasks().some(t=>!t.done&&t.due)?'<button data-act="ics-all">Все дела в календарь телефона (.ics)</button>':''}</div>
+    <p class="hint" style="margin:6px 0 0">Уведомления приходят, пока приложение открыто или свёрнуто. Чтобы напоминание сработало точно, даже когда телефон спит, — у дела нажмите «В Google Календарь».</p></section>`;
+}
+function taskSheet(){
+  const isNew=ui.task==='new', t=isNew?Object.assign({title:'',sec:ui.sec!=='all'?ui.sec:'farm',due:ui.day||null,time:null,prio:'normal',rep:'none',remind:'none',note:''},ui.taskDraft||{}):liveTasks().find(x=>x.id===ui.task);
+  if(!t){ ui.task=null; return ''; }
+  const opt=(o,v)=>Object.entries(o).map(([k,l])=>`<option value="${k}" ${v===k?'selected':''}>${l}</option>`).join('');
+  return `<div class="sheet-bg" data-act="task-close"><div class="sheet" role="dialog" aria-modal="true" aria-label="Дело" data-stop="1">
+    <div class="card-head"><h2>${isNew?'Новое дело':'Дело'}</h2><button class="ghost" data-act="task-close">✕</button></div>
+    <label class="f">Что сделать<input id="tk-title" value="${esc(t.title)}" placeholder="Например: позвонить ветеринару"></label>
+    <div class="form-grid">
+      <label class="f">Раздел<select id="tk-sec">${opt(SECS,t.sec)}</select></label>
+      <label class="f">Дата<input type="date" id="tk-due" value="${esc(t.due||'')}"></label>
+      <label class="f">Время<input type="time" id="tk-time" value="${esc(t.time||'')}"></label>
+      <label class="f">Важность<select id="tk-prio">${opt({normal:'обычное',high:'важное'},t.prio)}</select></label>
+      <label class="f">Повтор<select id="tk-rep">${opt(REPS,t.rep)}</select></label>
+      <label class="f">Напомнить<select id="tk-rem">${opt(REMS,t.remind)}</select></label>
+    </div>
+    <label class="f">Заметка<textarea id="tk-note" class="note" rows="3">${esc(t.note||'')}</textarea></label>
+    <div class="row"><button class="primary" data-act="task-save">Сохранить</button>
+      ${!isNew&&t.due?`<a class="btn" href="${esc(gcalUrl(t))}" target="_blank" rel="noopener">В Google Календарь</a><button data-act="task-ics">Скачать .ics</button>`:''}</div>
+    ${isNew?'':(ui.confirmTask?`<div class="row"><span class="hint">Удалить дело?</span><button class="danger" data-act="task-del-yes">Удалить</button><button data-act="task-del-no">Отмена</button></div>`:'<button class="ghost" data-act="task-del" style="align-self:flex-start;color:var(--bad)">Удалить дело</button>')}
+  </div></div>`;
+}
+function taskSave(){
+  const g=(k)=>document.getElementById('tk-'+k), title=(g('title').value||'').trim(); if(!title){ g('title').focus(); return; }
+  const p={title, sec:g('sec').value, due:g('due').value||null, time:g('time').value||null, prio:g('prio').value, rep:g('rep').value, remind:g('rem').value, note:g('note').value.trim(), updatedAt:Date.now()};
+  if(p.time&&!p.due) p.due=todayISO();
+  if(ui.task==='new') newTask(p); else Object.assign(liveTasks().find(x=>x.id===ui.task)||{}, p);
+  if(p.remind!=='none'&&'Notification' in window&&Notification.permission==='default') Notification.requestPermission().catch(()=>{});
+  ui.task=null; ui.taskDraft=null; save(); render();
+}
+function quickAdd(){
+  const el=document.getElementById('qa'), v=(el&&el.value||'').trim(); if(!v) return;
+  const p=parseQuick(v); if(!p.title) return;
+  if(!p.due&&ui.day&&ui.day!==todayISO()) p.due=ui.day;
+  newTask(p); save(); render();
+  setTimeout(()=>{ const q=document.getElementById('qa'); if(q) q.focus(); },30);
+}
+// Животные Насти — одной кнопкой (вес и надои примерные, их поправляют во вкладке «Хозяйство»).
+function seedOurFarm(){
+  if(!S) S=blank();
+  if(S.animals.length) return;
+  const mk=(sp,name,o)=>{ const a=Object.assign(newAnimal(sp),{name},o||{}); S.animals.push(a); return a; };
+  mk('horse','Шалфей',{state:'rest'});
+  mk('horse','Тоша',{state:'rest'});                       // мерин
+  mk('goat','Сметанка',{state:'milk',milk:2});              // белая коза
+  mk('goat','Карамелька',{state:'milk',milk:2});            // наполовину альпийская
+  mk('buck','Анатолий (Толик)',{state:'rest'});
+  mk('hens','Куры',{count:10,state:'lay'});
+  mk('cow','Корова джерси',{planned:true,w:400,milk:15,fat:5.2,state:'milk'}); // в планах, из Игналинского района (Литва)
+  ui.tab='herd'; save(); render();
+}
+function tasksSummary(){
+  const today=todayISO(), wk=addDaysISO(today,7), open=liveTasks().filter(t=>!t.done);
+  const fmtT=(t)=>`— ${t.title}${t.due?' ('+(t.due===today?'сегодня':t.due)+(t.time?' '+t.time:'')+')':''} [${SECS[t.sec]}]`;
+  const over=open.filter(t=>t.due&&t.due<today), now=open.filter(t=>t.due&&t.due>=today&&t.due<=wk);
+  if(!over.length&&!now.length) return '';
+  return 'Дела:\n'+(over.length?'Просрочено:\n'+over.slice(0,15).map(fmtT).join('\n')+'\n':'')+(now.length?'На неделю:\n'+now.slice(0,25).map(fmtT).join('\n'):'');
+}
+
 /* ---------- Хозяйство ---------- */
 function animalForm(a){
   const sp=SPECIES[a.sp], hens=a.sp==='hens';
@@ -1216,6 +1445,7 @@ function viewHerd(){
         ${S.settings.email?`<a class="btn primary-link" href="mailto:${encodeURIComponent(S.settings.email)}?subject=${encodeURIComponent('Отчёт подворья '+todayISO())}&body=${encodeURIComponent(reportText().slice(0,1800))}" target="_blank" rel="noopener">Открыть письмо с отчётом</a>`:'<span class="hint">Впишите почту — появится кнопка письма.</span>'}
         <button data-act="report-dl">Скачать отчёт (.txt)</button>
       </div>
+      <label class="row" style="font-size:14px"><input type="checkbox" id="set-daily" data-flag="dailyMail" ${S.settings.dailyMail?'checked':''}> Каждое утро письмо: дела на сегодня и просроченные</label>
       <p class="hint" style="margin:0">Каждый понедельник утром отчёт сам придёт на эту почту. Кнопка выше — чтобы отправить его прямо сейчас из почты телефона.</p>
     </div></section>
   ${viewTeam()}
@@ -1274,6 +1504,26 @@ document.addEventListener('click',e=>{
   if(act==='feed'){ ui.feed=t.dataset.feed; render(); return; }
   if(act==='feed-close'){ ui.feed=null; render(); return; }
   if(act==='feed-stock'){ const fid=t.dataset.feed; ui.feed=null; ui.tab='stock'; ui.open[fid]=true; render(); setTimeout(()=>{const el=document.getElementById('stk-'+fid); if(el) el.scrollIntoView({block:'center'});},30); return; }
+  if(act==='task-close'&&t.classList.contains('sheet-bg')&&e.target.closest('[data-stop]')) return;
+  if(act==='task-done'){ toggleDone(t.dataset.t); return; }
+  if(act==='task-open'){ ui.task=t.dataset.t; ui.confirmTask=false; render(); return; }
+  if(act==='task-new'){ ui.task='new'; ui.taskDraft=t.dataset.title?{title:t.dataset.title,sec:t.dataset.sec||'farm',due:todayISO()}:null; render(); return; }
+  if(act==='task-close'){ ui.task=null; ui.taskDraft=null; render(); return; }
+  if(act==='task-save'){ taskSave(); return; }
+  if(act==='task-del'){ ui.confirmTask=true; render(); return; }
+  if(act==='task-del-no'){ ui.confirmTask=false; render(); return; }
+  if(act==='task-del-yes'){ const x=liveTasks().find(y=>y.id===ui.task); if(x){ x.deleted=true; x.updatedAt=Date.now(); } ui.task=null; ui.confirmTask=false; save(); render(); return; }
+  if(act==='task-ics'){ const x=liveTasks().find(y=>y.id===ui.task); if(x) saveFile((x.title.slice(0,40)||'дело')+'.ics', icsFile([x])); return; }
+  if(act==='ics-all'){ saveFile('Дела подворья.ics', icsFile(liveTasks().filter(x=>!x.done&&x.due))); return; }
+  if(act==='qa-add'){ quickAdd(); return; }
+  if(act==='sec'){ ui.sec=t.dataset.s; render(); return; }
+  if(act==='day-step'){ ui.day=addDaysISO(ui.day||todayISO(), +t.dataset.n); render(); return; }
+  if(act==='day-go'){ ui.day=t.dataset.d; render(); return; }
+  if(act==='cal-toggle'){ ui.cal=!ui.cal; render(); return; }
+  if(act==='month'){ const d=new Date((ui.day||todayISO()).slice(0,7)+'-01T12:00:00'); d.setMonth(d.getMonth()+ +t.dataset.n); ui.day=isoOf(d); ui.cal=true; render(); return; }
+  if(act==='notif-on'){ Notification.requestPermission().then(()=>{ render(); checkReminders(); }).catch(()=>{}); return; }
+  if(act==='todo-buy'){ const f=F[t.dataset.feed]; if(f){ newTask({title:'Купить: '+f.name.toLowerCase(), sec:'farm', due:todayISO()}); save(); note='Дело «Купить: '+f.name.toLowerCase()+'» добавлено на сегодня во вкладку «Дела».'; render(); setTimeout(()=>{ note=null; render(); },4000); } return; }
+  if(act==='seed-ours'){ seedOurFarm(); return; }
   if(act==='auth-go'){ authGo(); return; }
   if(act==='auth-switch'){ const el=document.getElementById('au-email'); if(el) ui.auEmail=el.value; ui.authMode=ui.authMode==='up'?'in':'up'; authErr=''; render(); return; }
   if(act==='sign-out'){ ui.confirmOut=true; render(); return; }
@@ -1357,11 +1607,15 @@ document.addEventListener('click',e=>{
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey&&e.target&&e.target.id==='chat-in'){ e.preventDefault(); chatSend(); return; }
   if(e.key==='Enter'&&e.target&&(e.target.id==='au-pw'||e.target.id==='au-email')){ e.preventDefault(); authGo(); return; }
-  if(e.key==='Escape'){ if(ui.feed) ui.feed=null; else if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo=null; } else if(ui.chat&&ui.chat.open){ ui.chat.open=false; } else return; render(); }
+  if(e.key==='Enter'&&e.target&&e.target.id==='qa'){ e.preventDefault(); quickAdd(); return; }
+  if(e.key==='Escape'){ if(ui.task){ ui.task=null; ui.taskDraft=null; } else if(ui.feed) ui.feed=null; else if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo=null; } else if(ui.chat&&ui.chat.open){ ui.chat.open=false; } else return; render(); }
 });
 document.addEventListener('toggle',e=>{ const d=e.target; if(d.dataset&&d.dataset.det) ui.open[d.dataset.det]=d.open; },true);
 document.addEventListener('change',e=>{
-  const t=e.target; if(!S) return;
+  const t=e.target;
+  if(t.dataset.daynote){ if(!S) S=blank(); const v=t.value.trim(); if(v) S.days[t.dataset.daynote]=v; else delete S.days[t.dataset.daynote]; save(); return; }
+  if(!S) return;
+  if(t.dataset.flag){ S.settings[t.dataset.flag]=t.checked; save(); render(); return; }
   if(t.dataset.jset){ ui[t.dataset.jset]=t.value; render(); return; }
   if(t.dataset.photo&&ui.photo){ const p=ui.photo; p.urls.forEach(u=>URL.revokeObjectURL(u));
     p.files=[...(t.files||[])].slice(0,p.mode==='store'?IMG_MAX:1); p.urls=p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.text=''; p.err=''; render(); return; }

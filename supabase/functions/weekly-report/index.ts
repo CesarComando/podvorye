@@ -17,6 +17,35 @@ Deno.serve(async (req) => {
   const from = Deno.env.get('REPORT_FROM')?.trim()
   if (!key || !from) return Response.json({ skipped: 'RESEND_API_KEY / REPORT_FROM не заданы' })
 
+  // ?mode=daily — утреннее письмо: дела на сегодня и просроченные (только если включено в настройках хозяйства).
+  if (new URL(req.url).searchParams.get('mode') === 'daily') {
+    const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Riga' })
+    const SEC: Record<string, string> = { farm: 'Хозяйство', home: 'Дом', ferma: 'Ферма', me: 'Личное' }
+    const { data: all, error: e1 } = await admin.from('farms').select('id, name, data, report_email').not('report_email', 'is', null)
+    if (e1) return Response.json({ error: e1.message }, { status: 500 })
+    const sent: unknown[] = []
+    for (const f of all ?? []) {
+      const d: any = f.data || {}
+      if (!d.settings?.dailyMail) continue
+      const open = (d.tasks || []).filter((t: any) => !t.deleted && !t.done && t.due && t.due <= today)
+        .sort((a: any, b: any) => ((a.due + (a.time || '')) < (b.due + (b.time || '')) ? -1 : 1))
+      if (!open.length) continue
+      const line = (t: any) => `${t.time ? t.time + ' — ' : ''}${t.title}${t.due < today ? ` (просрочено с ${t.due.split('-').reverse().slice(0, 2).join('.')})` : ''} · ${SEC[t.sec] || ''}`
+      const text = `Доброе утро! Дела на сегодня:\n\n${open.map((t: any) => '— ' + line(t)).join('\n')}\n\nХорошего дня 🌾`
+      const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.5;color:#1E2B1C;max-width:640px">
+        <h2 style="color:#3A8A3C;margin:0 0 10px">🌾 Доброе утро! Дела на сегодня</h2>
+        <ul style="padding-left:20px;margin:0">${open.map((t: any) => `<li style="margin:4px 0${t.due < today ? ';color:#B23E2C' : ''}">${esc(line(t))}</li>`).join('')}</ul>
+        <p style="color:#5E6B55;font-size:13px;margin-top:18px">Отключить утреннее письмо — во вкладке «Хозяйство».</p></div>`
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from, to: [String(f.report_email).trim()], subject: `Дела на сегодня: ${open.length}`, html, text }),
+      })
+      if (!r.ok) console.error('daily resend', r.status, await r.text())
+      sent.push({ farm: f.id, ok: r.ok, tasks: open.length })
+    }
+    return Response.json({ daily: sent })
+  }
+
   const { data: farms, error } = await admin.from('farms')
     .select('id, name, report, report_email, updated_at')
     .not('report_email', 'is', null).not('report', 'is', null)

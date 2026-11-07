@@ -19,6 +19,8 @@ export default defineConfig({
         scope: './',
         display: 'standalone',
         orientation: 'portrait',
+        // «Поделиться» → «Подворье» из Gmail, WhatsApp, браузера: текст становится новым делом.
+        share_target: { action: './', method: 'GET', params: { title: 'title', text: 'text', url: 'url' } },
         theme_color: '#3A8A3C',
         background_color: '#FFFEF7',
         icons: [
