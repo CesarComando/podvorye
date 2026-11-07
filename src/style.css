@@ -141,6 +141,15 @@ header.top .sync{max-width:46%}
 header.top .sync span{overflow:hidden;text-overflow:ellipsis}
 nav.tabs .in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(6,1fr);gap:0}
 nav.tabs button{font-size:11px!important;padding-inline:0!important}
+/* Дом, покупки, сводка */
+.seg.wide{display:flex;width:100%}
+.seg.wide button{flex:1;font-size:14px;min-height:42px}
+button.tip-btn{all:unset;box-sizing:border-box;display:grid;grid-template-columns:4px minmax(0,1fr);gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px 10px 0;overflow:hidden;cursor:pointer;width:100%}
+button.tip-btn::before{content:"";border-radius:0 3px 3px 0;background:var(--line)}
+button.tip-btn.bad::before{background:var(--bad)} button.tip-btn.warn::before{background:var(--warn)}
+.task.shop input.num{width:96px;min-height:44px;font-size:16px}
+.tick.pay{color:var(--accent);font-size:16px}
+.tick.big{width:46px;height:46px;min-height:46px;font-size:24px}
 /* Дела */
 .day-nav{display:flex;align-items:center;justify-content:space-between;gap:6px}
 .day-title{flex:1;border:0;background:transparent;font-family:var(--font-display);font-size:18px;font-weight:600;text-transform:capitalize;color:var(--ink);padding:6px;min-height:44px}

@@ -29,6 +29,10 @@ Deno.serve(async (req) => {
       if (!d.settings?.dailyMail) continue
       const open = (d.tasks || []).filter((t: any) => !t.deleted && !t.done && t.due && t.due <= today)
         .sort((a: any, b: any) => ((a.due + (a.time || '')) < (b.due + (b.time || '')) ? -1 : 1))
+      // счета со сроком в ближайшие 3 дня — тоже в утреннее письмо
+      const in3 = new Date(Date.parse(today + 'T12:00:00Z') + 3 * 864e5).toISOString().slice(0, 10)
+      for (const b of (d.bills || []).filter((b: any) => !b.deleted && !b.paid && b.due && b.due <= in3))
+        open.push({ title: `Оплатить: ${b.to}${b.amount ? ' — ' + Number(b.amount).toFixed(2).replace('.', ',') + ' €' : ''}${b.due > today ? ' (до ' + b.due.split('-').reverse().slice(0, 2).join('.') + ')' : ''}`, due: b.due < today ? b.due : today, sec: b.sec })
       if (!open.length) continue
       const line = (t: any) => `${t.time ? t.time + ' — ' : ''}${t.title}${t.due < today ? ` (просрочено с ${t.due.split('-').reverse().slice(0, 2).join('.')})` : ''} · ${SEC[t.sec] || ''}`
       const text = `Доброе утро! Дела на сегодня:\n\n${open.map((t: any) => '— ' + line(t)).join('\n')}\n\nХорошего дня 🌾`

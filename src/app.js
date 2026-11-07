@@ -1,4 +1,4 @@
-import './style.css'
+﻿import './style.css'
 import { registerSW } from 'virtual:pwa-register'
 import { getSession, onAuth, signIn, signUp, signOut, myFarm, joinFarm, createInvite, listMembers, removeMember,
   fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
@@ -189,14 +189,19 @@ let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg=
 const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[]}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
   const arr=(x)=>Array.isArray(x)?x:[];
-  return {v:1, animals:arr(d.animals), feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
-    customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days)};
+  // Незнакомые поля (отопление, счета, машины, покупки и будущие разделы) сохраняем как есть.
+  const out=Object.assign({}, d, {v:1, animals:arr(d.animals), feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
+    customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days)});
+  for(const k of SYNC_LISTS) out[k]=arr(d[k]);
+  return out;
 }
+// Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
+const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests'];
 const markRation=(a)=>{ if(a) a.rationChanged=todayISO(); };
 const stable=(o)=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((r,k2)=>(r[k2]=v[k2],r),{}):v);
 const clone=(o)=>JSON.parse(JSON.stringify(o));
@@ -221,7 +226,7 @@ function mergeData(local, remote){
   const m=clone(local), ids=new Set((m.log||[]).map(e=>e.id));
   for(const e of (remote.log||[])) if(!ids.has(e.id)) m.log.push(e);
   // дела и учёт: по id, побеждает более свежая правка (updatedAt); удаление — пометка deleted
-  for(const k of ['tasks','money']){
+  for(const k of SYNC_LISTS){
     const by=new Map((m[k]||[]).map(x=>[x.id,x]));
     for(const r of (remote[k]||[])){ const l=by.get(r.id); if(!l||(r.updatedAt||0)>(l.updatedAt||0)) by.set(r.id,r); }
     m[k]=[...by.values()];
@@ -290,9 +295,17 @@ async function initStore(){
   session=await getSession();
   if(!session){ authView=true; setSync('local','Вход не выполнен'); }
   // Только локальная разработка (npm run dev): #demo — посмотреть экраны без входа, на примерных данных.
-  if(import.meta.env.DEV&&location.hash==='#demo'){ authView=false; if(!S){ S=blank(); seedOurFarm();
+  if(import.meta.env.DEV&&location.hash.startsWith('#demo')){ authView=false; const [,dt,ds]=location.hash.split(':'); setTimeout(()=>{ if(dt){ ui.tab=dt; if(dt==='home') ui.homeView=ds; if(dt==='stock') ui.stockView=ds; render(); } },0); if(!S){ S=blank(); seedOurFarm();
     const td=todayISO(); [['Купить комбикорм',td,'10:00','farm','high'],['Позвонить ветеринару про прививки',addDaysISO(td,-1),null,'farm'],['Оплатить свет',addDaysISO(td,1),null,'home'],['Отвезти яйца деду',addDaysISO(td,3),'15:00','me'],['Убрать в курятнике',null,null,'farm']]
-      .forEach(([title,due,time,sec,prio])=>newTask({title,due,time,sec,prio:prio||'normal',rep:title.startsWith('Оплатить')?'month':'none',remind:time?'1h':'none'})); S.tasks[0].done=false; ui.tab='tasks'; } }
+      .forEach(([title,due,time,sec,prio])=>newTask({title,due,time,sec,prio:prio||'normal',rep:title.startsWith('Оплатить')?'month':'none',remind:time?'1h':'none'})); S.tasks[0].done=false;
+    S.bills.push(touch({id:uid(),to:'Latvenergo',what:'свет',amount:'',varies:true,due:addDaysISO(td,2),rep:'month',sec:'home',iban:'LV00HABA0000000000000',ref:'Līgums 123',paid:false}),touch({id:uid(),to:'Tele2',what:'связь',amount:14.99,due:addDaysISO(td,9),rep:'month',sec:'me',paid:false}));
+    S.cars.push(touch({id:'car1',name:'Škoda',plate:'AB1234',fuel:'95',inspection:addDaysISO(td,20),octa:addDaysISO(td,60),serviceKm:15000,lastServiceKm:120000,serviceMonths:12,lastServiceDate:'2026-03-01'}));
+    [[addDaysISO(td,-40),40,62.4,120200,true,'Neste'],[addDaysISO(td,-20),35,53.9,120700,true,'Virši'],[addDaysISO(td,-3),38,57.8,121210,true,'Circle K']].forEach(([date,liters,sum,odo,full,station])=>S.fuel.push(touch({id:uid(),car:'car1',date,liters,sum,price:sum/liters,odo,full,station})));
+    addShopItems('молоко, хлеб, 10 яиц, сыр','Домой'); addShopItems('кефир, гречка, лекарства','Деду');
+    [['молоко','Lidl',0.89],['молоко','Maxima',1.05],['хлеб','Lidl',1.19],['хлеб','Maxima',0.99],['сыр','Lidl',2.49],['сыр','Maxima',3.6]].forEach(([name,store,price])=>S.shopPrices.push(touch({id:uid(),name,store,price,date:td})));
+    S.heat=Object.assign(heatDefaults(),{bagPrice:2.5,stockL:40*30,stockDate:td,area:90});
+    addMoney({type:'in',amount:45,cat:'Продажа яиц',sec:'farm'}); addMoney({type:'out',amount:62.4,cat:'Корм',sec:'farm'});
+    ui.tab='tasks'; } }
   // Открыли через «Поделиться» (Gmail, WhatsApp, браузер) — сразу форма нового дела.
   try{
     const q=new URLSearchParams(location.search), st=q.get('title'), sx=q.get('text'), su=q.get('url');
@@ -381,13 +394,14 @@ function lowStock(){
 const main=document.getElementById('main');
 function render(){
   applyFeedData();
-  document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab?'page':'false'));
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab||(ui.tab==='tips'&&b.dataset.tab==='ration')?'page':'false'));
   if(!loaded){ main.innerHTML=`<div class="card empty"><p class="hint">Загружаю данные хозяйства…</p>${note?`<div class="notice">${esc(note)}</div>`:''}</div>`; return; }
   const top=note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'';
   document.querySelector('nav.tabs').style.display=authView?'none':'';
   if(authView){ main.innerHTML=top+viewAuth(); return; }
-  if(ui.tab!=='tasks'&&(!S||!S.animals.length)){ main.innerHTML=top+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
-  main.innerHTML=top+({tasks:viewTasks,ration:viewRation,stock:viewStock,tips:viewTips,journal:viewJournal,herd:viewHerd}[ui.tab])()+(ui.task?taskSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
+  if(!['tasks','home'].includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
+  if(!S&&ui.tab==='home') S=blank();
+  main.innerHTML=top+({tasks:viewTasks,home:viewHome,ration:()=>rationSeg()+viewRation(),stock:viewStock,tips:()=>rationSeg()+viewTips(),journal:viewJournal,herd:viewHerd}[ui.tab])()+(ui.task?taskSheet():'')+(ui.bill?billSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
 }
 function viewAuth(){
   const up=ui.authMode==='up';
@@ -615,6 +629,10 @@ function periodDays(){
   let d=dayDiff(todayISO(), s.seasonEnd||'2027-05-01'); return d>0?d:1;
 }
 function viewStock(){
+  const seg=`<div class="seg" style="margin:6px 0 4px"><button data-act="stock-view" data-v="feed" aria-pressed="${ui.stockView!=='heat'}">Корма</button><button data-act="stock-view" data-v="heat" aria-pressed="${ui.stockView==='heat'}">Дрова и тепло</button></div>`;
+  return seg+(ui.stockView==='heat'?viewHeat():viewFeedStock());
+}
+function viewFeedStock(){
   const s=S.settings, inc=s.includePlanned, daily=herdDaily(inc), days=periodDays();
   const used=FEEDS.filter(f=>daily[f.id]>0||(S.feeds[f.id]&&+S.feeds[f.id].stock>0));
   let costDay=0, buyCost=0, firstOut=null, noPrice=0;
@@ -1009,6 +1027,14 @@ function farmSummary(){
   const e=econ(); if(e.milkL) lines.push(`Молоко: ≈ ${fmt(e.milkL,1)} л в день, корм на литр ≈ ${e.milkCostL?money(e.milkCostL):'—'}${S.settings.milkPrice?', продаём по '+money(+S.settings.milkPrice)+'/л':''}.`);
   if(e.eggs) lines.push(`Яйца: ≈ ${fmt(e.eggs,1)} шт в день, корм на яйцо ≈ ${e.eggCost?money(e.eggCost):'—'}${S.settings.eggPrice?', продаём по '+money(+S.settings.eggPrice)+'/шт':''}.`);
   const ts=tasksSummary(); if(ts) lines.push(ts);
+  const hs=heatSummary(); if(hs) lines.push(hs);
+  const ob=live('bills').filter(b=>!b.paid).sort((a,b)=>a.due<b.due?-1:1).slice(0,10);
+  if(ob.length) lines.push('Счета к оплате: '+ob.map(b=>`${b.to}${b.what?' ('+b.what+')':''} до ${b.due}${b.amount?' '+money(+b.amount):''}`).join('; '));
+  const paidBy={}; for(const m of live('money').filter(m=>m.bill)) { (paidBy[m.bill]=paidBy[m.bill]||[]).push(+m.amount||0); }
+  const pb=Object.entries(paidBy).map(([k,v])=>`${k}: в среднем ${money(v.reduce((s,x)=>s+x,0)/v.length)} (${v.length} оплат, последняя ${money(v[v.length-1])})`); if(pb.length) lines.push('История оплат: '+pb.join('; '));
+  for(const c of live('cars')){ const s=carStats(c); if(s.fills.length) lines.push(`Машина ${c.name}: расход сейчас ${s.cur?fmt(s.cur,1):'—'} л/100 км, средний ${s.avg?fmt(s.avg,1):'—'}; по месяцам: ${Object.entries(s.byMonth).slice(-6).map(([k,v])=>k+' '+money(v.sum)).join(', ')}; техосмотр до ${c.inspection||'—'}, OCTA до ${c.octa||'—'}.`); }
+  const ym=todayISO().slice(0,7), mm=live('money').filter(m=>m.date&&m.date.startsWith(ym));
+  if(mm.length) lines.push(`Учёт за этот месяц: доходы ${money(mm.filter(m=>m.type==='in').reduce((s,m)=>s+(+m.amount||0),0))}, расходы ${money(mm.filter(m=>m.type==='out').reduce((s,m)=>s+(+m.amount||0),0))}.`);
   lines.push('Страна: Латвия. Цены в евро. Сегодня '+todayISO()+'.');
   return lines.join('\n');
 }
@@ -1030,6 +1056,11 @@ function photoPrompt(mode){
 ${feedList()}
 Животные (id — кличка, вид):
 ${animalList()}`;
+  if(mode==='bill') return `На фото счёт к оплате (Латвия: Latvenergo, вода, связь, кредит и т.п.). Достань данные для оплаты.
+Ответь только JSON: {"to": "получатель", "what": "за что, 1–3 слова по-русски", "amount": число евро или null, "due": "YYYY-MM-DD" или null, "iban": "IBAN получателя без пробелов" или null, "ref": "назначение платежа / номер договора или клиента" или null, "note": "одно предложение по-русски, если что-то неясно"}.
+Не выдумывай: если поле не видно — null. Номера карт и личные коды не переписывай.`;
+  if(mode==='fuel') return `На фото чек с заправки или табло колонки. Достань данные заправки.
+Ответь только JSON: {"liters": число или null, "sum": число евро или null, "price": цена за литр или null, "station": "сеть заправки (Circle K, Neste, Viada, Virši…)" или null, "date": "YYYY-MM-DD" или null}. Не выдумывай — чего не видно, то null.`;
   if(mode==='milk') return `На фото кувшин, банка, ведро или мерная ёмкость с молоком на ферме. Оцени объём молока по делениям или меткам на ёмкости (или по объёму тары, если он виден). Ответь только JSON: {"value": число литров или null, "confidence": "high" | "medium" | "low", "note": "одно короткое предложение по-русски, как оценено"}. Если делений нет — оцени примерно и поставь confidence "low".`;
   return `Ты — опытный зоотехник и специалист по хранению кормов и организации небольшой фермы. На фото — место хранения кормов (склад, сарай, кладовая, курятник или хлев).
 Дай практичные советы по-русски, по тому, что действительно видно на фото:
@@ -1052,6 +1083,11 @@ async function photoRun(){
     } else {
       const r=await SAMPLE.json(photoPrompt(p.mode),{images:p.files, signal:p.ctl.signal});
       p.res=r&&typeof r==='object'?r:{};
+      const s=(v)=>v===null||v===undefined?'':String(v), n2=(v)=>isFinite(+v)&&+v>0?+v:'';
+      if(p.mode==='bill'){ const x=p.res; ui.bill='new'; ui.billDraft={to:s(x.to), what:s(x.what), amount:n2(x.amount), due:/^\d{4}-\d\d-\d\d$/.test(s(x.due))?x.due:todayISO(), iban:s(x.iban).replace(/\s+/g,''), ref:s(x.ref), note:s(x.note), rep:'month', sec:'home', varies:!n2(x.amount)};
+        p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='bills'; render(); return; }
+      if(p.mode==='fuel'){ const x=p.res; ui.fuelDraft={liters:n2(x.liters), sum:n2(x.sum), price:n2(x.price), station:s(x.station), date:/^\d{4}-\d\d-\d\d$/.test(s(x.date))?x.date:todayISO()};
+        p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='car'; render(); flash('Проверьте цифры с чека, впишите пробег и нажмите «Записать заправку».'); return; }
       if(p.mode==='weigh'){ const v=+p.res.value; p.kg=isFinite(v)&&v>0?(p.res.unit==='g'?v/1000:v):0;
         p.feed=F[p.res.feed]?p.res.feed:''; p.an=animalById(p.res.animal)?p.res.animal:''; }
       else { const v=+p.res.value; p.l=isFinite(v)&&v>0?v:0; }
@@ -1061,8 +1097,10 @@ async function photoRun(){
 }
 function photoSheet(){
   const p=ui.photo, an=S.animals.filter(a=>!a.planned);
-  const modes=[['weigh','Весы: сколько даю'],['milk','Надой: кувшин'],['store','Склад: совет']];
-  const hint={weigh:'Сфотографируйте экран весов с кормом — Claude прочитает вес и предложит записать его в рацион.',
+  const modes=[['weigh','Весы'],['milk','Кувшин'],['bill','Счёт'],['fuel','Чек заправки'],['store','Склад']];
+  const hint={bill:'Сфотографируйте счёт — Claude достанет получателя, сумму, срок и IBAN. Вы проверите и сохраните.',
+    fuel:'Сфотографируйте чек или табло колонки — Claude достанет литры, сумму и цену.',
+    weigh:'Сфотографируйте экран весов с кормом — Claude прочитает вес и предложит записать его в рацион.',
     milk:'Сфотографируйте кувшин или банку с делениями — Claude оценит, сколько литров надоили, и запишет в журнал.',
     store:`Сфотографируйте склад или сарай с кормами (до ${IMG_MAX} фото) — Claude подскажет, как удобнее и безопаснее хранить и раскладывать корма.`}[p.mode];
   let res='';
@@ -1174,7 +1212,7 @@ function chatInstr(){
   return `Ты — дружелюбный помощник по подворью в приложении «Рационы подворья». Хозяйство находится в Латвии, цены в евро. Помогаешь хозяйке с кормлением, рационами, уходом, хранением кормов, здоровьем животных, учётом и развитием хозяйства.
 Тон: говори с ней тепло, по-дружески и с уважением — как заботливая, мудрая мама: бережно, спокойно, без поучений, упрёков и страшилок. Она добрый, тёплый и ранимый человек: сначала замечай, что у неё уже хорошо получается, ошибки называй мягко («давай попробуем вот так»), поддерживай и подбадривай, но не сюсюкай и не льсти. Обращайся на «ты» мягко и по-доброму. Если она переживает — сначала успокой, потом помоги по делу.
 Правила: отвечай по-русски, коротко и практично, конкретными цифрами там, где можно; опирайся на данные хозяйства ниже. Если по описанию есть признаки болезни или опасности (не ест, вздутие, колики, хромота, кровь, высокая температура) — прямо советуй срочно вызвать ветеринара. Про законы и субсидии Латвии (PVD, LAD, VID) отвечай в общих чертах и советуй уточнить на их сайтах. Если чего-то не знаешь — так и скажи. Без заголовков с # и без звёздочек; списки через «—».
-Подсказки по приложению: «Рацион» — нормы и «Составить рацион»/«Подобрать дешевле»; «Запасы» — склад и цены; «Советы» — что поправить и план развития; «Журнал» — надои, яйца, вес; «Хозяйство» — животные, свои корма, отчёт. Кнопка с фотоаппаратом распознаёт весы, кувшин и склад.
+Подсказки по приложению (вкладки внизу): «Дела» — ежедневник, сводка «Что требует внимания», напоминания, «В Google Календарь»; «Дом» — Счета (напоминания, «Скопировать реквизиты», «Оплачено»), Учёт (доходы и расходы, выгрузка для Excel), Машина (заправки, расход, техосмотр, OCTA), Покупки (списки «Домой» и «Деду», режим «В магазине», где дешевле, маршрут); «Рацион» — нормы, «Составить рацион», «Подобрать дешевле», и рядом «Советы» с планом развития; «Запасы» — корма на складе и «Дрова и тепло» (сколько уходит на отопление и как сэкономить); «Журнал» — надои, яйца, вес; «Хозяйство» — животные, свои корма, отчёт на почту, участники. Кнопка с фотоаппаратом распознаёт весы, кувшин, счёт, чек заправки и склад. Если она просит то, что уже есть, — подскажи, где это. Если чего-то нет — предложи нажать «Предложить улучшение» внизу окна помощника.
 
 Данные хозяйства:
 ${farmSummary()}`;
@@ -1204,8 +1242,421 @@ function chatSheet(){
     ${c.err?`<div class="notice">${esc(c.err)}</div>`:''}
     <div class="chat-in"><textarea id="chat-in" rows="2" placeholder="Ваш вопрос…" aria-label="Ваш вопрос">${esc(c.draft||'')}</textarea>
       ${c.busy?'<button data-act="chat-stop">Стоп</button>':'<button class="primary" data-act="chat-send">Спросить</button>'}</div>
+    ${c.req?`<div class="builder"><strong>Что неудобно или чего не хватает?</strong><textarea id="req-text" class="note" rows="3" placeholder="Например: хочу видеть дела деда отдельно…">${esc(c.reqDraft||'')}</textarea>
+      <div class="row"><button class="primary" data-act="req-send">Отправить пожелание</button><button data-act="req-close">Отмена</button></div>
+      <p class="hint" style="margin:0">Пожелание увидит владелец хозяйства. Статус — во вкладке «Хозяйство».</p></div>`
+      :'<button class="ghost" data-act="req-open" style="align-self:flex-start">💡 Предложить улучшение приложения</button>'}
     <p class="hint" style="margin:0">Ответы — от Claude, это не замена ветеринару. Нужен интернет.</p>
   </div></div>`;
+}
+
+/* ---------- Дрова и тепло ---------- */
+// Плотность древесины при ~20% влажности, кг/м³ плотной древесины; теплота сгорания, кВт·ч/кг по влажности; КПД топки.
+const WOOD={birch:['Берёза',650],alder:['Ольха',500],aspen:['Осина',480],pine:['Сосна, ель',500],oak:['Дуб, ясень',720],mixed:['Смешанные',570]};
+const MOIST={dry:['сухие, до 20% — сохли 1–2 года под крышей',4.0],seasoned:['подсохшие, 20–30%',3.6],wet:['сырые, свежепиленые 35% и больше',2.8]};
+const STOVE={pyro:['Пиролизный или современный котёл',0.82],boiler:['Обычный твердотопливный котёл',0.65],stove:['Кирпичная печь',0.7],metal:['Металлическая печь («буржуйка»)',0.55],fireplace:['Открытый камин',0.25]};
+const HOUSE={old:['Старый дом без утепления',230],avg:['Частично утеплён',160],good:['Хорошо утеплён',100]};
+// Доля плотной древесины: насыпью (мешок, насыпной м³) ≈0,45; складом (складочный м³) ≈0,7; в топке ≈0,5.
+const SOLID={loose:0.45, stacked:0.7, firebox:0.5};
+function heatDefaults(){ return {wood:'birch', moist:'seasoned', stove:'boiler', boilerL:60, fill:80, loads:2, bagL:40, bagPrice:'', m3Price:'', stockL:null, stockDate:null, area:'', house:'avg', season:200, elec:0.20, buys:[]}; }
+function heatCalc(){
+  const h=Object.assign(heatDefaults(), S.heat||{});
+  const dens=WOOD[h.wood][1], cv=MOIST[h.moist][1], eff=STOVE[h.stove][1];
+  const loadLooseL=(+h.boilerL||0)*(+h.fill||0)/100*SOLID.firebox/SOLID.loose;      // одна закладка в литрах «насыпью»
+  const kWhPerLooseL=SOLID.loose/1000*dens*cv;                                     // тепло в литре дров насыпью (в дровах)
+  const dayLooseL=loadLooseL*(+h.loads||0), dayKWh=dayLooseL*kWhPerLooseL*eff;      // полезное тепло в день
+  const pL=+h.bagPrice&&+h.bagL?(+h.bagPrice)/(+h.bagL):(+h.m3Price?(+h.m3Price)/1000:0);
+  const costDay=dayLooseL*pL, costKWh=dayKWh?costDay/dayKWh:0;
+  const since=h.stockDate?Math.max(0,dayDiff(h.stockDate,todayISO())):0;
+  const left=h.stockL!==null&&h.stockL!==''?Math.max(0,(+h.stockL)-dayLooseL*since):null;
+  const need=+h.area?(+h.area)*HOUSE[h.house][1]:0;                               // кВт·ч тепла дому за сезон
+  const needLooseL=need&&kWhPerLooseL*eff?need/(kWhPerLooseL*eff):0;
+  return {h,dens,cv,eff,loadLooseL,kWhPerLooseL,dayLooseL,dayKWh,pL,costDay,costKWh,left,daysLeft:left!==null&&dayLooseL?left/dayLooseL:null,need,needLooseL};
+}
+const m3=(L)=>fmt(L/1000,1)+' м³';
+function heatTips(c){
+  const h=c.h, out=[];
+  if(h.moist!=='dry'){ const gain=(MOIST.dry[1]/c.cv-1)*100;
+    out.push({lv:'warn',who:'Сухость дров',txt:`Сухие дрова дают на ${fmt(gain,0)}% больше тепла${c.costDay?` — это ≈ ${money(c.costDay*30*(1-c.cv/MOIST.dry[1]))} в месяц`:''}. Покупайте дрова весной на следующую зиму и сушите год-два под навесом, поленницей с продувом, накрытой только сверху. Влагомер стоит около 10–15 € — сухие дрова показывают меньше 20%.`}); }
+  if(h.stove==='fireplace'||h.stove==='metal') out.push({lv:'warn',who:'Печь',txt:`${STOVE[h.stove][0]} отдаёт в дом только около ${fmt(c.eff*100,0)}% тепла дров. Кирпичный экран вокруг металлической печи или закрытая топка с дверцей заметно поднимают КПД.`});
+  if(h.stove==='boiler') out.push({lv:'idea',who:'Котёл',txt:'Обычный котёл теряет много тепла, когда его душат воздухом ночью: дрова тлеют, в трубе оседает дёготь. Лучше топить в полную силу и копить тепло в баке-аккумуляторе (буферной ёмкости) — экономия дров до 20–30%. Чистите теплообменник и дымоход раз в месяц в сезон: 1 мм сажи — минус несколько процентов тепла.'});
+  if(+h.fill<70) out.push({lv:'idea',who:'Закладка',txt:`Топка заполняется на ${fmt(+h.fill,0)}%. Полная закладка горит ровнее и с большим КПД, чем частые маленькие подкладки.`});
+  out.push({lv:'idea',who:'Розжиг сверху',txt:'Кладите крупные поленья вниз, мелкие — наверх и разжигайте сверху: дрова горят дольше, меньше дыма и сажи, больше тепла от той же закладки.'});
+  if(h.house!=='good'){ const save=h.house==='old'?0.3:0.15;
+    out.push({lv:'idea',who:'Утепление',txt:`Больше всего тепла уходит через потолок и окна. Утепление чердака (20–30 см минваты) и уплотнители на окнах и дверях в ${h.house==='old'?'неутеплённом':'частично утеплённом'} доме экономят около ${fmt(save*100,0)}% дров${c.costDay?` — примерно ${money(c.costDay*(+h.season||200)*save)} за сезон`:''}. Отражающий экран за радиаторами и шторы на ночь — копеечные, но тоже помогают.`}); }
+  if(c.costKWh&&+h.elec) out.push({lv:c.costKWh<(+h.elec)?'ok':'warn',who:'Сравнение',txt:`1 кВт·ч тепла из ваших дров стоит ${money(c.costKWh)}, электричество — ${money(+h.elec)}, тепловой насос (воздух–воздух) — примерно ${money((+h.elec)/3)}. ${c.costKWh<(+h.elec)/3?'Дрова сейчас самые выгодные.':c.costKWh<(+h.elec)?'Дрова выгоднее прямого электроотопления; для межсезонья можно присмотреться к тепловому насосу.':'Дрова сейчас дороже электричества — проверьте цену и сухость дров.'}`});
+  out.push({lv:'idea',who:'Порода',txt:`Сравнивайте не цену за куб, а цену за тепло: в кубе берёзы ≈ ${fmt(WOOD.birch[1]*SOLID.loose*c.cv/1000,1)} МВт·ч, ольхи ≈ ${fmt(WOOD.alder[1]*SOLID.loose*c.cv/1000,1)}, осины ≈ ${fmt(WOOD.aspen[1]*SOLID.loose*c.cv/1000,1)} (насыпью). Ольха дешевле, но тепла даёт на ~23% меньше берёзы.`});
+  return out;
+}
+function viewHeat(){
+  const c=heatCalc(), h=c.h, sd=+h.season||200;
+  const opt=(o,v)=>Object.entries(o).map(([k,[l]])=>`<option value="${k}" ${v===k?'selected':''}>${l}</option>`).join('');
+  const bags=(L)=>+h.bagL?fmt(L/(+h.bagL),1)+' меш.':'—';
+  const tip=(x)=>`<div class="tip ${x.lv}"><div><span class="who">${esc(x.who)}</span><p>${esc(x.txt)}</p></div></div>`;
+  const buys=(h.buys||[]).slice().sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
+  return `
+  <section class="section"><div class="section-head"><h2>Сколько уходит на тепло</h2><span class="hint">по вашим цифрам ниже</span></div>
+    <div class="summary">
+      <div class="stat"><span class="k">В день</span><span class="v">${bags(c.dayLooseL)}</span><span class="s">${c.costDay?money(c.costDay):'укажите цену'} · ${fmt(c.dayKWh,0)} кВт·ч тепла</span></div>
+      <div class="stat"><span class="k">В месяц</span><span class="v">${c.costDay?money(c.costDay*30):bags(c.dayLooseL*30)}</span><span class="s">${bags(c.dayLooseL*30)} · ${m3(c.dayLooseL*30)} насыпью</span></div>
+      <div class="stat"><span class="k">За сезон (${sd} дн.)</span><span class="v">${c.costDay?money(c.costDay*sd):m3(c.dayLooseL*sd)}</span><span class="s">${m3(c.dayLooseL*sd)} насыпью · ${m3(c.dayLooseL*sd*SOLID.loose/SOLID.stacked)} складом</span></div>
+      <div class="stat"><span class="k">Запаса хватит</span><span class="v">${c.daysLeft!==null?fmt(c.daysLeft,0)+' дн.':'—'}</span><span class="s">${c.daysLeft!==null?'до '+addDays(c.daysLeft)+' · осталось '+bags(c.left):'впишите остаток или покупку'}</span></div>
+    </div>
+    ${c.need?`<div class="notice">Дому ${+h.area} м² (${HOUSE[h.house][0].toLowerCase()}) нужно примерно ${fmt(c.need/1000,1)} МВт·ч тепла за сезон — это ≈ ${m3(c.needLooseL)} таких дров насыпью${c.pL?` (${money(c.needLooseL*c.pL)})`:''}. При вашей топке выходит ${m3(c.dayLooseL*sd)}: ${c.dayLooseL*sd<c.needLooseL*0.85?'похоже, топите меньше, чем нужно дому, — в доме может быть прохладно.':c.dayLooseL*sd>c.needLooseL*1.2?'это больше расчётной потребности — проверьте сухость дров, тягу и утепление.':'в пределах нормы.'}</div>`:''}
+  </section>
+  <section class="section"><div class="section-head"><h2>Котёл или печь</h2></div>
+    <div class="card"><div class="form-grid">
+      <label class="f">Что топим<select id="ht-stove" data-heat="stove">${opt(STOVE,h.stove)}</select></label>
+      <label class="f">Объём топки, литров<input id="ht-bl" inputmode="decimal" data-heat="boilerL" value="${esc(h.boilerL)}"></label>
+      <label class="f">Заполняю топку, %<input id="ht-fill" inputmode="decimal" data-heat="fill" value="${esc(h.fill)}"></label>
+      <label class="f">Закладок в день<input id="ht-loads" inputmode="decimal" data-heat="loads" value="${esc(h.loads)}"></label>
+    </div>
+    <details ${ui.open.dims?'open':''} data-det="dims"><summary>Не знаю объём — посчитать по размерам топки</summary>
+      <div class="form-grid" style="margin-top:8px">
+        <label class="f">Ширина, см<input id="ht-w" inputmode="decimal" value="${esc(ui.dimW||'')}"></label>
+        <label class="f">Глубина, см<input id="ht-d" inputmode="decimal" value="${esc(ui.dimD||'')}"></label>
+        <label class="f">Высота до дверцы, см<input id="ht-h" inputmode="decimal" value="${esc(ui.dimH||'')}"></label>
+      </div><button style="margin-top:8px" data-act="heat-dims">Посчитать объём</button></details>
+    <p class="hint" style="margin:0">Одна закладка ≈ ${bags(c.loadLooseL)} (${fmt(c.loadLooseL,0)} л дров насыпью), даёт ≈ ${fmt(c.loadLooseL*c.kWhPerLooseL*c.eff,0)} кВт·ч тепла в дом (КПД ≈ ${fmt(c.eff*100,0)}%).</p></div>
+  </section>
+  <section class="section"><div class="section-head"><h2>Дрова</h2></div>
+    <div class="card"><div class="form-grid">
+      <label class="f">Порода<select id="ht-wood" data-heat="wood">${opt(WOOD,h.wood)}</select></label>
+      <label class="f">Влажность<select id="ht-moist" data-heat="moist">${opt(MOIST,h.moist)}</select></label>
+      <label class="f">Объём мешка, л<input id="ht-bag" inputmode="decimal" data-heat="bagL" value="${esc(h.bagL)}"></label>
+      <label class="f">Цена мешка, €<input id="ht-bp" inputmode="decimal" data-heat="bagPrice" value="${esc(h.bagPrice)}" placeholder="0"></label>
+      <label class="f">или цена насыпного м³, €<input id="ht-mp" inputmode="decimal" data-heat="m3Price" value="${esc(h.m3Price)}" placeholder="0"></label>
+      <label class="f">Сейчас есть, мешков<input id="ht-stock" inputmode="decimal" data-heat="stockBags" value="${c.left!==null&&+h.bagL?fmt(c.left/(+h.bagL),0):''}" placeholder="посчитать"></label>
+    </div><p class="hint" style="margin:0">Насыпной м³ — дрова навалом в кузове; складочный — ровно сложенные в поленницу (в нём дров примерно в 1,5 раза больше).</p></div>
+  </section>
+  <section class="section"><div class="section-head"><h2>Купили дрова</h2><span class="hint">запишется в бюджет дома</span></div>
+    <div class="card"><div class="form-grid">
+      <label class="f">Дата<input type="date" id="hb-date" value="${todayISO()}"></label>
+      <label class="f">Сколько<input id="hb-qty" inputmode="decimal" placeholder="0"></label>
+      <label class="f">Чего<select id="hb-unit"><option value="bag">мешков</option><option value="m3l">м³ насыпью</option><option value="m3s">м³ складом</option></select></label>
+      <label class="f">Заплатили всего, €<input id="hb-sum" inputmode="decimal" placeholder="0"></label>
+    </div><div class="row"><button class="primary" data-act="heat-buy">Записать покупку</button></div>
+    ${buys.length?`<div class="tbl-wrap"><table><thead><tr><th>Дата</th><th>Сколько</th><th class="n">€</th><th class="n">€ за кВт·ч</th></tr></thead><tbody>${buys.map(b=>{ const L=b.unit==='bag'?b.qty*(+h.bagL||40):b.unit==='m3l'?b.qty*1000:b.qty*1000*SOLID.stacked/SOLID.loose;
+      return `<tr><td>${shortDate(b.date)}</td><td>${fmt(b.qty,1)} ${b.unit==='bag'?'меш.':b.unit==='m3l'?'м³ насыпью':'м³ складом'}</td><td class="n">${money(b.sum)}</td><td class="n">${L&&c.kWhPerLooseL?money(b.sum/(L*c.kWhPerLooseL*c.eff)):'—'}</td></tr>`; }).join('')}</tbody></table></div>`:''}</div>
+  </section>
+  <section class="section"><div class="section-head"><h2>Дом</h2><span class="hint">чтобы проверить, хватает ли тепла</span></div>
+    <div class="card"><div class="form-grid">
+      <label class="f">Площадь, м²<input id="ht-area" inputmode="decimal" data-heat="area" value="${esc(h.area)}" placeholder="например, 90"></label>
+      <label class="f">Дом<select id="ht-house" data-heat="house">${opt(HOUSE,h.house)}</select></label>
+      <label class="f">Отопительный сезон, дней<input id="ht-season" inputmode="numeric" data-heat="season" value="${esc(h.season)}"></label>
+      <label class="f">Электричество, € за кВт·ч<input id="ht-el" inputmode="decimal" data-heat="elec" value="${esc(h.elec)}"></label>
+    </div></div>
+  </section>
+  <section class="section"><div class="section-head"><h2>Как сделать теплее и выгоднее</h2></div>
+    <div class="advice">${heatTips(c).map(tip).join('')}</div>
+    ${SAMPLE&&(!farm||aiEnabled)?'<button data-act="heat-ask">Спросить помощника про отопление</button>':''}
+    <p class="hint">Расчёт примерный: по средней плотности и теплоте сгорания породы, влажности и КПД топки. Точнее всего — сравнить с тем, сколько мешков реально уходит за неделю, и поправить «закладок в день».</p>
+  </section>`;
+}
+function heatSummary(){
+  if(!S||!S.heat) return '';
+  const c=heatCalc(), h=c.h;
+  return `Отопление: ${STOVE[h.stove][0]}, топка ${h.boilerL} л, ${h.loads} закладок в день, дрова — ${WOOD[h.wood][0].toLowerCase()}, ${MOIST[h.moist][0]}; уходит ≈ ${fmt(c.dayLooseL/1000,2)} м³ насыпью в день${c.costDay?', '+money(c.costDay)+' в день, '+money(c.costDay*30)+' в месяц, 1 кВт·ч тепла '+money(c.costKWh):''}${h.area?'; дом '+h.area+' м², '+HOUSE[h.house][0].toLowerCase():''}${c.daysLeft!==null?'; запаса на '+fmt(c.daysLeft,0)+' дн.':''}.`;
+}
+
+/* ---------- Дом: счета, учёт, машина, покупки ---------- */
+const live=(k)=>((S&&S[k])||[]).filter(x=>!x.deleted);
+const touch=(x)=>{ x.updatedAt=Date.now(); return x; };
+const monthName=(ym)=>{ const s=new Date(ym+'-15T12:00:00').toLocaleDateString('ru-RU',{month:'long',year:'numeric'}); return s[0].toUpperCase()+s.slice(1); };
+const addMonthsISO=(iso,n)=>{ const d=new Date(iso+'T12:00:00'), day=d.getDate(); d.setDate(1); d.setMonth(d.getMonth()+n); d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate())); return isoOf(d); };
+async function copyText(txt){
+  try{ await navigator.clipboard.writeText(txt); return true; }
+  catch(e){ try{ const ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); const ok=document.execCommand('copy'); ta.remove(); return ok; }catch(e2){ return false; } }
+}
+function flash(msg){ note=msg; render(); clearTimeout(flash.t); flash.t=setTimeout(()=>{ note=null; render(); },3500); }
+function addMoney(p){ if(!S) S=blank(); const m=touch(Object.assign({id:uid(), date:todayISO(), type:'out', amount:0, sec:'home', cat:'Прочее', note:''},p)); S.money.push(m); return m; }
+
+// ---- Счета ----
+const BREPS={month:'каждый месяц', quarter:'каждый квартал', year:'каждый год', once:'разово'};
+const billNext=(iso,rep)=>rep==='month'?addMonthsISO(iso,1):rep==='quarter'?addMonthsISO(iso,3):rep==='year'?addMonthsISO(iso,12):null;
+const billReq=(b,amt)=>[`Получатель: ${b.to||''}`, b.iban?`IBAN: ${b.iban.replace(/\s+/g,'')}`:'', b.ref?`Назначение: ${b.ref}`:'', (amt||b.amount)?`Сумма: ${fmt(amt||b.amount,2)} EUR`:''].filter(Boolean).join('\n');
+function viewBills(){
+  const today=todayISO(), wk=addDaysISO(today,7), ym=today.slice(0,7);
+  const open=live('bills').filter(b=>!b.paid).sort((a,b)=>a.due<b.due?-1:1);
+  const monthSum=open.filter(b=>b.due<=ym+'-31').reduce((s,b)=>s+(+b.amount||0),0);
+  const varies=open.filter(b=>b.due<=ym+'-31'&&b.varies&&!(+b.amount)).length;
+  const row=(b)=>{ const over=b.due<today, soon=!over&&b.due<=addDaysISO(today,3);
+    return `<div class="task ${over?'over':''}"><button class="tick pay" data-act="bill-pay" data-b="${b.id}" aria-label="Оплачено: ${esc(b.to)}">€</button>
+      <button class="task-body" data-act="bill-open" data-b="${b.id}"><span class="task-title">${esc(b.to||'Счёт')}${b.what?' — '+esc(b.what):''}</span>
+      <span class="task-meta">${over?'просрочен · ':soon?'скоро · ':''}до ${shortDate(b.due)} · ${b.amount?money(+b.amount):b.varies?'сумма разная':'—'} · ${BREPS[b.rep]} · ${SECS[b.sec]||''}</span></button></div>`; };
+  const groups=[['Просрочено',open.filter(b=>b.due<today),'over'],['На этой неделе',open.filter(b=>b.due>=today&&b.due<=wk)],['В этом месяце',open.filter(b=>b.due>wk&&b.due<=ym+'-31')],['Позже',open.filter(b=>b.due>ym+'-31')]];
+  const paid=live('bills').filter(b=>b.paid).sort((a,b)=>(b.paidAt||0)-(a.paidAt||0)).slice(0,10);
+  return `<section class="section"><div class="summary"><div class="stat"><span class="k">К оплате в ${new Date().toLocaleDateString('ru-RU',{month:'long'})}</span><span class="v">${money(monthSum)}</span><span class="s">${varies?`и ещё ${varies} с разной суммой`:open.filter(b=>b.due<today).length?'есть просроченные':'всё по плану'}</span></div></div>
+    <div class="row"><button class="primary" data-act="bill-new">+ Счёт</button>${SAMPLE_IMG&&(!farm||aiEnabled)?'<button data-act="photo-open" data-m="bill">📷 Счёт по фото</button>':''}</div></section>
+  ${groups.filter(g=>g[1].length).map(([h,l,k])=>`<section class="section tgroup ${k||''}"><div class="section-head"><h2>${h}</h2><span class="hint">${money(l.reduce((s,b)=>s+(+b.amount||0),0))}</span></div><div class="card tlist">${l.map(row).join('')}</div></section>`).join('')||'<div class="card empty"><p class="hint">Счетов пока нет. Добавьте свет, воду, связь, кредит, страховку — приложение напомнит за 3 дня и в день срока.</p></div>'}
+  ${paid.length?`<section class="section"><details><summary>Оплачено недавно</summary><div class="card tlist">${paid.map(b=>`<div class="task done"><span class="tick">✓</span><span class="task-body"><span class="task-title">${esc(b.to)}${b.what?' — '+esc(b.what):''}</span><span class="task-meta">${money(+b.paidAmount||+b.amount||0)} · оплачено ${shortDate(isoOf(new Date(b.paidAt)))}</span></span></div>`).join('')}</div></details></section>`:''}
+  <p class="hint">Платить приложение не умеет и не хранит карты, PIN и пароли банка: «Скопировать реквизиты» — и вставить в интернет-банк. Свой счёт, если нужно, — только последние 4 цифры в заметке.</p>`;
+}
+function billSheet(){
+  const isNew=ui.bill==='new', b=isNew?Object.assign({to:'',what:'',sec:'home',amount:'',varies:false,due:todayISO(),rep:'month',iban:'',ref:'',note:''},ui.billDraft||{}):live('bills').find(x=>x.id===ui.bill);
+  if(!b){ ui.bill=null; return ''; }
+  const opt=(o,v)=>Object.entries(o).map(([k,l])=>`<option value="${k}" ${v===k?'selected':''}>${l}</option>`).join('');
+  const paying=ui.billPay===b.id;
+  return `<div class="sheet-bg" data-act="bill-close"><div class="sheet" role="dialog" aria-modal="true" aria-label="Счёт" data-stop="1">
+    <div class="card-head"><h2>${isNew?'Новый счёт':esc(b.to||'Счёт')}</h2><button class="ghost" data-act="bill-close">✕</button></div>
+    ${paying?`<div class="builder"><strong>Сколько заплатили?</strong><div class="row"><input id="bl-paid" inputmode="decimal" value="${b.amount?fmt(b.amount,2):''}" style="width:140px" placeholder="€"><button class="primary" data-act="bill-pay-ok" data-b="${b.id}">Оплачено</button><button data-act="bill-pay-no">Отмена</button></div><p class="hint" style="margin:0">Расход запишется в «Учёт», следующий счёт поставится по графику.</p></div>`:''}
+    <div class="form-grid">
+      <label class="f">Кому (получатель)<input id="bl-to" value="${esc(b.to)}" placeholder="Latvenergo, Daugavpils ūdens…" list="bl-payees"></label>
+      <label class="f">За что<input id="bl-what" value="${esc(b.what)}" placeholder="свет, вода, связь…"></label>
+      <label class="f">Сумма, €<input id="bl-amt" inputmode="decimal" value="${b.amount===''||b.amount==null?'':fmt(b.amount,2)}" placeholder="если разная — пусто"></label>
+      <label class="f">Оплатить до<input type="date" id="bl-due" value="${esc(b.due||'')}"></label>
+      <label class="f">Повтор<select id="bl-rep">${opt(BREPS,b.rep)}</select></label>
+      <label class="f">Раздел<select id="bl-sec">${opt(SECS,b.sec)}</select></label>
+      <label class="f">IBAN получателя<input id="bl-iban" value="${esc(b.iban)}" placeholder="LV.." autocapitalize="characters"></label>
+      <label class="f">Назначение / № договора<input id="bl-ref" value="${esc(b.ref)}"></label>
+    </div>
+    <datalist id="bl-payees">${[...new Set(live('bills').map(x=>x.to).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+    <label class="row" style="font-size:14px"><input type="checkbox" id="bl-varies" ${b.varies?'checked':''}> Сумма каждый раз разная (свет, вода) — спросить при оплате</label>
+    <label class="f">Заметка<textarea id="bl-note" class="note" rows="2">${esc(b.note||'')}</textarea></label>
+    <div class="row"><button class="primary" data-act="bill-save">Сохранить</button>
+      ${isNew?'':`<button data-act="bill-copy" data-b="${b.id}">Скопировать реквизиты</button><button data-act="bill-pay" data-b="${b.id}">Оплачено</button><a class="btn" href="${esc(gcalUrl({title:'Оплатить: '+(b.to||'счёт'),due:b.due,time:null,note:billReq(b),sec:b.sec,rep:'none'}))}" target="_blank" rel="noopener">В Google Календарь</a>`}</div>
+    ${isNew?'':(ui.confirmBill?`<div class="row"><span class="hint">Удалить счёт?</span><button class="danger" data-act="bill-del-yes">Удалить</button><button data-act="bill-del-no">Отмена</button></div>`:'<button class="ghost" data-act="bill-del" style="align-self:flex-start;color:var(--bad)">Удалить счёт</button>')}
+  </div></div>`;
+}
+function billSave(){
+  const g=(k)=>document.getElementById('bl-'+k), to=g('to').value.trim(); if(!to){ g('to').focus(); return; }
+  const amt=g('amt').value.trim();
+  const p={to, what:g('what').value.trim(), amount:amt===''?'':Math.max(0,num(amt)), due:g('due').value||todayISO(), rep:g('rep').value, sec:g('sec').value,
+    iban:g('iban').value.replace(/\s+/g,'').toUpperCase(), ref:g('ref').value.trim(), varies:g('varies').checked, note:g('note').value.trim()};
+  if(!S) S=blank();
+  if(ui.bill==='new') S.bills.push(touch(Object.assign({id:uid(), paid:false},p))); else touch(Object.assign(live('bills').find(x=>x.id===ui.bill)||{},p));
+  ui.bill=null; ui.billDraft=null; save(); render();
+}
+function billPaid(id, amt){
+  const b=live('bills').find(x=>x.id===id); if(!b) return;
+  const sum=amt>0?amt:+b.amount||0;
+  b.paid=true; b.paidAt=Date.now(); b.paidAmount=sum; touch(b);
+  if(sum>0) addMoney({type:'out', amount:sum, sec:b.sec, cat:b.what?b.what[0].toUpperCase()+b.what.slice(1):'Коммуналка', note:'Счёт: '+b.to, bill:b.to});
+  const nd=billNext(b.due,b.rep);
+  if(nd) S.bills.push(touch({id:uid(), to:b.to, what:b.what, sec:b.sec, amount:b.varies?'':b.amount, varies:b.varies, due:nd, rep:b.rep, iban:b.iban, ref:b.ref, note:b.note, paid:false}));
+  ui.billPay=null; ui.bill=null; save(); flash(`Оплачено: ${b.to}${sum?' — '+money(sum)+' записано в «Учёт»':''}${nd?'. Следующий счёт — до '+shortDate(nd):''}.`);
+}
+
+// ---- Учёт ----
+const CATS_OUT=['Корм','Ветеринар','Дрова','Коммуналка','Топливо','Ремонт','Продукты','Связь','Кредит','Налоги','Одежда','Прочее'];
+const CATS_IN=['Продажа молока','Продажа яиц','Продажа молодняка','Зарплата','Подарок','Прочее'];
+const catsFor=(type)=>[...new Set([...(type==='in'?CATS_IN:CATS_OUT), ...((S&&S.settings.moneyCats&&S.settings.moneyCats[type])||[]), ...live('money').filter(m=>m.type===type).map(m=>m.cat)])].filter(Boolean);
+function viewMoney(){
+  const ym=ui.ym||todayISO().slice(0,7), list=live('money').filter(m=>m.date&&m.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date));
+  const inc=list.filter(m=>m.type==='in').reduce((s,m)=>s+(+m.amount||0),0), out=list.filter(m=>m.type==='out').reduce((s,m)=>s+(+m.amount||0),0);
+  const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ bySec[m.sec]=(bySec[m.sec]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
+  const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(SECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
+  const mt=ui.mType||'out';
+  return `<section class="section"><div class="day-nav"><button class="ghost big-btn" data-act="ym" data-n="-1" aria-label="Прошлый месяц">‹</button><span class="day-title" style="text-transform:none">${monthName(ym)}</span><button class="ghost big-btn" data-act="ym" data-n="1" aria-label="Следующий месяц">›</button></div>
+    <div class="summary"><div class="stat"><span class="k">Доходы</span><span class="v" style="color:var(--ok)">${money(inc)}</span></div>
+      <div class="stat"><span class="k">Расходы</span><span class="v">${money(out)}</span></div>
+      <div class="stat"><span class="k">Разница</span><span class="v" style="color:${inc-out>=0?'var(--ok)':'var(--bad)'}">${inc-out>=0?'+':''}${money(inc-out)}</span></div></div></section>
+  <section class="section"><div class="section-head"><h2>Записать</h2></div><div class="card">
+    <div class="seg"><button data-act="m-type" data-t="out" aria-pressed="${mt==='out'}">Расход</button><button data-act="m-type" data-t="in" aria-pressed="${mt==='in'}">Доход</button></div>
+    <div class="form-grid">
+      <label class="f">Сумма, €<input id="mn-amt" inputmode="decimal" placeholder="0"></label>
+      <label class="f">Категория<input id="mn-cat" list="mn-cats" placeholder="${mt==='in'?'Продажа яиц':'Корм'}"></label>
+      <label class="f">Раздел<select id="mn-sec">${Object.entries(SECS).map(([k,l])=>`<option value="${k}" ${k==='home'?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Дата<input type="date" id="mn-date" value="${ym===todayISO().slice(0,7)?todayISO():ym+'-01'}"></label>
+    </div><datalist id="mn-cats">${catsFor(mt).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <label class="f">Заметка<input id="mn-note" placeholder="необязательно"></label>
+    <div class="row"><button class="primary" data-act="m-add">Записать</button></div></div></section>
+  ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
+  <section class="section"><div class="section-head"><h2>Записи за месяц</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
+    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(SECS[m.sec]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
+}
+function moneyCSV(){
+  const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
+  for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), SECS[m.sec]||m.sec, m.cat, m.note||'']);
+  return '﻿'+rows.map(r=>r.map(v=>/[;"\n]/.test(String(v))?'"'+String(v).replace(/"/g,'""')+'"':v).join(';')).join('\r\n');
+}
+
+// ---- Машина ----
+const FUELS={'95':'Бензин 95','98':'Бензин 98',diesel:'Дизель',lpg:'Газ (LPG)'};
+const r2=(x)=>Math.round((+x||0)*100)/100;                 // деньги — ровно до цента
+function carStats(car){
+  const fills=live('fuel').filter(f=>f.car===car.id).sort((a,b)=>(+a.odo||0)-(+b.odo||0)||a.date.localeCompare(b.date));
+  const segs=[]; let lastFull=null, acc=0;
+  for(const f of fills){ if(lastFull){ acc+=+f.liters||0; if(f.full&&+f.odo>+lastFull.odo){ segs.push({l:acc, km:+f.odo-+lastFull.odo, to:f}); acc=0; lastFull=f; } } else if(f.full){ lastFull=f; acc=0; } }
+  const segL=segs.reduce((s,x)=>s+x.l,0), segKm=segs.reduce((s,x)=>s+x.km,0);
+  const odoMin=fills.length?+fills[0].odo||0:0, odoMax=fills.length?+fills[fills.length-1].odo||0:0, km=odoMax-odoMin;
+  const sumAfterFirst=fills.slice(1).reduce((s,f)=>s+(+f.sum||0),0);
+  const byMonth={}; for(const f of fills){ const ym=f.date.slice(0,7); byMonth[ym]=byMonth[ym]||{sum:0,l:0}; byMonth[ym].sum+=+f.sum||0; byMonth[ym].l+=+f.liters||0; }
+  const st={}; for(const f of fills) if(f.station&&+f.price){ (st[f.station]=st[f.station]||[]).push(+f.price); }
+  const stations=Object.entries(st).map(([n,p])=>({n,avg:p.reduce((s,x)=>s+x,0)/p.length,cnt:p.length})).sort((a,b)=>a.avg-b.avg);
+  return {fills, cur:segs.length?segs[segs.length-1].l/segs[segs.length-1].km*100:null, avg:segKm?segL/segKm*100:null, perKm:km>0?sumAfterFirst/km:null, byMonth, stations, odo:odoMax};
+}
+function carAlerts(){
+  const R=[], at9=(iso)=>new Date(iso+'T09:00:00').getTime();
+  for(const c of live('cars')){
+    const add=(due,days,what)=>{ if(!due) return; for(const d of days) R.push({key:'c|'+c.id+'|'+what+'|'+due+'|'+d, at:at9(addDaysISO(due,-d)), title:`${c.name}: ${what}`, body:d?`через ${d} дн. — ${shortDate(due)}`:'сегодня срок', tag:c.id+what, due, what, car:c}); };
+    add(c.inspection,[30,7,0],'техосмотр'); add(c.octa,[14,0],'OCTA'); if(c.kasko) add(c.kasko,[14,0],'КАСКО');
+    if(+c.serviceMonths&&c.lastServiceDate) add(addMonthsISO(c.lastServiceDate,+c.serviceMonths),[14,0],'ТО / масло');
+  }
+  return R;
+}
+function serviceByKm(c){ if(!+c.serviceKm||!(+c.lastServiceKm)) return null; const s=carStats(c); const left=(+c.lastServiceKm+ +c.serviceKm)-s.odo; return left; }
+function viewCar(){
+  const cars=live('cars');
+  if(!cars.length||ui.carEdit) return carForm(ui.carEdit&&ui.carEdit!=='new'?cars.find(c=>c.id===ui.carEdit):null);
+  const c=cars.find(x=>x.id===ui.car)||cars[0]; ui.car=c.id; const s=carStats(c), ym=todayISO().slice(0,7), m=s.byMonth[ym]||{sum:0,l:0};
+  const yr=Object.entries(s.byMonth).filter(([k])=>k.startsWith(ym.slice(0,4))).reduce((a,[,v])=>a+v.sum,0);
+  const kmLeft=serviceByKm(c), last=s.fills[s.fills.length-1];
+  const alerts=carAlerts().filter(a=>a.car.id===c.id&&a.at<=Date.now()+0&&dayDiff(todayISO(),a.due)>=0).filter((a,i,arr)=>arr.findIndex(b=>b.what===a.what)===i);
+  return `${cars.length>1?`<div class="chips">${cars.map(x=>`<button class="chip-btn ${x.id===c.id?'on':''}" data-act="car-pick" data-c="${x.id}">${esc(x.name)}</button>`).join('')}</div>`:''}
+  ${alerts.map(a=>`<div class="tip ${dayDiff(todayISO(),a.due)<=7?'bad':'warn'}"><div><span class="who">${esc(a.what)}</span><p>Срок ${shortDate(a.due)} — ${dayDiff(todayISO(),a.due)?'через '+dayDiff(todayISO(),a.due)+' дн':'сегодня'}. После прохождения впишите новую дату в настройках машины.</p></div></div>`).join('')}
+  ${kmLeft!==null&&kmLeft<1000?`<div class="tip ${kmLeft<0?'bad':'warn'}"><div><span class="who">ТО / масло</span><p>${kmLeft<0?'Пробег для замены масла уже пройден на '+fmt(-kmLeft,0)+' км.':'До замены масла ≈ '+fmt(kmLeft,0)+' км.'}</p></div></div>`:''}
+  <section class="section"><div class="summary">
+    <div class="stat"><span class="k">Расход сейчас</span><span class="v">${s.cur?fmt(s.cur,1)+' л':'—'}</span><span class="s">на 100 км${s.avg?' · средний '+fmt(s.avg,1):''}</span></div>
+    <div class="stat"><span class="k">Этот месяц</span><span class="v">${money(m.sum)}</span><span class="s">${fmt(m.l,1)} л · за год ${money(yr)}</span></div>
+    <div class="stat"><span class="k">Километр стоит</span><span class="v">${s.perKm?money(s.perKm):'—'}</span><span class="s">${s.odo?'пробег '+fmt(s.odo,0)+' км':'внесите заправки'}</span></div>
+  </div><p class="hint" style="margin:0">Расход считается от полного бака до полного бака — отмечайте «полный бак», когда заливаете до щелчка.</p></section>
+  <section class="section"><div class="section-head"><h2>Заправка</h2>${SAMPLE_IMG&&(!farm||aiEnabled)?'<button class="ghost" data-act="photo-open" data-m="fuel">📷 по фото чека</button>':''}</div><div class="card">
+    <div class="form-grid">
+      <label class="f">Литров<input id="fu-l" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.liters||'')}"></label>
+      <label class="f">Сумма, €<input id="fu-s" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.sum||'')}"></label>
+      <label class="f">Цена за литр, €<input id="fu-p" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.price||'')}"></label>
+      <label class="f">Пробег, км<input id="fu-o" inputmode="numeric" placeholder="${last?'было '+fmt(+last.odo,0):'по одометру'}"></label>
+      <label class="f">Заправка<input id="fu-st" list="fu-sts" value="${esc(ui.fuelDraft&&ui.fuelDraft.station||last&&last.station||'')}" placeholder="Circle K, Neste, Viada, Virši…"></label>
+      <label class="f">Дата<input type="date" id="fu-d" value="${esc(ui.fuelDraft&&ui.fuelDraft.date||todayISO())}"></label>
+    </div><datalist id="fu-sts">${[...new Set(['Circle K','Neste','Viada','Virši',...live('fuel').map(f=>f.station).filter(Boolean)])].map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+    <label class="row" style="font-size:15px"><input type="checkbox" id="fu-full" checked> Полный бак</label>
+    <p class="hint" style="margin:0">Достаточно двух из трёх: литры, сумма, цена — третье посчитается.</p>
+    <div class="row"><button class="primary" data-act="fuel-add">Записать заправку</button></div></div></section>
+  ${s.stations.length>1?`<section class="section"><div class="section-head"><h2>Где дешевле</h2><span class="hint">по вашим заправкам</span></div><div class="card"><div class="tbl-wrap"><table><tbody>${s.stations.map(x=>`<tr><td>${esc(x.n)}</td><td class="n">${money(x.avg)}/л</td><td class="n">${x.cnt} раз</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
+  ${Object.keys(s.byMonth).length?`<section class="section"><div class="section-head"><h2>По месяцам</h2></div><div class="card"><div class="tbl-wrap"><table><tbody>${Object.entries(s.byMonth).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12).map(([k,v])=>`<tr><td>${monthName(k)}</td><td class="n">${fmt(v.l,1)} л</td><td class="n">${money(v.sum)}</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
+  <div class="row"><button class="ghost" data-act="car-edit" data-c="${c.id}">Сроки и данные машины</button><button class="ghost" data-act="car-edit" data-c="new">+ ещё машина</button></div>`;
+}
+function carForm(c){
+  c=c||{name:'',plate:'',fuel:'95',inspection:'',octa:'',kasko:'',serviceKm:15000,serviceMonths:12,lastServiceKm:'',lastServiceDate:''};
+  const opt=Object.entries(FUELS).map(([k,l])=>`<option value="${k}" ${c.fuel===k?'selected':''}>${l}</option>`).join('');
+  return `<section class="section"><div class="section-head"><h2>${c.id?'Машина':'Добавить машину'}</h2></div><div class="card"><div class="form-grid">
+    <label class="f">Название<input id="cr-name" value="${esc(c.name)}" placeholder="например, Škoda"></label>
+    <label class="f">Номер<input id="cr-plate" value="${esc(c.plate)}" autocapitalize="characters"></label>
+    <label class="f">Топливо<select id="cr-fuel">${opt}</select></label>
+    <label class="f">Техосмотр до<input type="date" id="cr-insp" value="${esc(c.inspection)}"></label>
+    <label class="f">OCTA до<input type="date" id="cr-octa" value="${esc(c.octa)}"></label>
+    <label class="f">КАСКО до (если есть)<input type="date" id="cr-kasko" value="${esc(c.kasko)}"></label>
+    <label class="f">Масло/ТО каждые, км<input id="cr-skm" inputmode="numeric" value="${esc(c.serviceKm)}"></label>
+    <label class="f">или каждые, мес.<input id="cr-smo" inputmode="numeric" value="${esc(c.serviceMonths)}"></label>
+    <label class="f">Последнее ТО — пробег<input id="cr-lkm" inputmode="numeric" value="${esc(c.lastServiceKm)}"></label>
+    <label class="f">Последнее ТО — дата<input type="date" id="cr-ldt" value="${esc(c.lastServiceDate)}"></label>
+  </div><p class="hint" style="margin:0">Напомню: техосмотр — за 30 и 7 дней и в день срока, OCTA — за 14 дней и в день, масло — по пробегу или по дате, что раньше.</p>
+  <div class="row"><button class="primary" data-act="car-save" data-c="${c.id||'new'}">Сохранить</button>${live('cars').length?'<button data-act="car-cancel">Отмена</button>':''}${c.id?`<button class="ghost" data-act="car-del" data-c="${c.id}" style="color:var(--bad)">Удалить машину</button>`:''}</div></div></section>`;
+}
+
+// ---- Покупки ----
+const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','Elvi','top!'];
+const shopLists=()=>(S&&S.settings.shopLists)||['Домой','Деду'];
+const storeList=()=>{ const own=live('stores'); return own.length?own:STORES_DEFAULT.map(n=>({id:'d_'+n,name:n,address:''})); };
+const normName=(s)=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
+function lastPrice(name, store){ const n=normName(name); const p=live('shopPrices').filter(x=>x.name===n&&(!store||x.store===store)).sort((a,b)=>b.date.localeCompare(a.date))[0]; return p||null; }
+function shopPlan(items){
+  const stores=[...new Set(live('shopPrices').map(p=>p.store))], known=items.filter(i=>stores.some(s=>lastPrice(i.name,s)));
+  if(!known.length) return null;
+  // лучший один магазин: где известна цена большинства, затем дешевле
+  const single=stores.map(s=>({s, items:known.filter(i=>lastPrice(i.name,s)), sum:known.reduce((a,i)=>{ const p=lastPrice(i.name,s); return a+(p?p.price*(+i.qty||1):0); },0)}))
+    .sort((a,b)=>b.items.length-a.items.length||a.sum-b.sum)[0];
+  const split={}; let splitSum=0;
+  for(const i of known){ const best=stores.map(s=>({s,p:lastPrice(i.name,s)})).filter(x=>x.p).sort((a,b)=>a.p.price-b.p.price)[0]; (split[best.s]=split[best.s]||{items:[],sum:0}); split[best.s].items.push(i); split[best.s].sum+=best.p.price*(+i.qty||1); splitSum+=best.p.price*(+i.qty||1); }
+  // сравниваем на тех товарах, что есть в «одном магазине»
+  const comp=single.items.reduce((a,i)=>{ const best=Math.min(...stores.map(s=>lastPrice(i.name,s)).filter(Boolean).map(p=>p.price)); return a+best*(+i.qty||1); },0);
+  const saving=single.sum-comp, extraStops=Object.keys(split).length-1;
+  const car=live('cars')[0], perKm=car?carStats(car).perKm:null, stopCost=extraStops*(+S.settings.stopKm||6)*(perKm||0.12);
+  const worth=extraStops>0&&saving-stopCost>(+S.settings.splitMin||3);
+  return {single, split, saving, stopCost, worth, unknown:items.filter(i=>!known.includes(i))};
+}
+function viewShop(){
+  const lists=shopLists(), L=lists.includes(ui.shopList)?ui.shopList:lists[0]; ui.shopList=L;
+  const items=live('shopItems').filter(i=>i.list===L), open=items.filter(i=>!i.done);
+  const freq={}; for(const i of live('shopItems').filter(i=>i.list===L)) freq[normName(i.name)]=(freq[normName(i.name)]||0)+1;
+  const openN=new Set(open.map(i=>normName(i.name)));
+  const sugg=Object.entries(freq).filter(([n])=>!openN.has(n)).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([n])=>n);
+  const mode=ui.shopStore;
+  const head=`<div class="chips">${lists.map(n=>`<button class="chip-btn ${n===L?'on':''}" data-act="shop-list" data-l="${esc(n)}">${esc(n)} ${live('shopItems').filter(i=>i.list===n&&!i.done).length||''}</button>`).join('')}<button class="chip-btn" data-act="shop-newlist">+ список</button></div>`;
+  if(mode){
+    const bought=items.filter(i=>i.done&&i.sessionStore===mode&&i.session===ui.shopSession);
+    const total=bought.reduce((s,i)=>s+(+i.price||0)*(+i.qty||1),0);
+    return `${head}<section class="section"><div class="section-head"><h2>В магазине: ${esc(mode)}</h2><span class="hint">${bought.length} куплено · ${money(total)}</span></div>
+      <div class="card tlist">${[...open,...bought].map(i=>`<div class="task shop ${i.done?'done':''}"><button class="tick big" data-act="shop-tick" data-i="${i.id}" aria-label="${i.done?'Вернуть':'Купила'}: ${esc(i.name)}">${i.done?'✓':''}</button>
+        <span class="task-body"><span class="task-title">${esc(i.name)}${+i.qty>1||i.unit?` · ${fmt(+i.qty||1,1)} ${esc(i.unit||'')}`:''}</span>${i.note?`<span class="task-meta">${esc(i.note)}</span>`:''}</span>
+        ${i.done?`<input class="num" inputmode="decimal" data-shopprice="${i.id}" value="${i.price?fmt(i.price,2):''}" placeholder="€ на полке" aria-label="Цена на полке: ${esc(i.name)}">`:(lastPrice(i.name,mode)?`<span class="hint">${money(lastPrice(i.name,mode).price)}</span>`:'')}</div>`).join('')||'<p class="hint" style="margin:8px">Список пуст.</p>'}</div>
+      <div class="row"><button class="primary" data-act="shop-finish">Итог: ${money(total)} — записать в «Учёт»</button><button data-act="shop-exit">Выйти без записи</button></div>
+      <p class="hint">Отмеченное «куплено» уходит вниз. Цену на полке писать не обязательно, но так приложение запомнит настоящие цены в ${esc(mode)}.</p></section>`;
+  }
+  const plan=open.length?shopPlan(open):null, home=S.settings.homeAddr||'';
+  const routeUrl=(names)=>{ const addr=names.map(n=>{ const s=storeList().find(x=>x.name===n); return s&&s.address?s.address:n+', Daugavpils'; });
+    const p=new URLSearchParams({api:'1', travelmode:'driving', destination:addr[addr.length-1]}); if(home) p.set('origin',home); if(addr.length>1) p.set('waypoints',addr.slice(0,-1).join('|')); return 'https://www.google.com/maps/dir/?'+p.toString(); };
+  return `${head}
+  <section class="section"><div class="quick"><input id="sh-add" placeholder="Молоко, хлеб, 10 яиц…" enterkeyhint="done" autocomplete="off"><button class="primary" data-act="shop-add" aria-label="Добавить">+</button></div>
+    ${sugg.length?`<div class="chips">${sugg.map(n=>`<button class="chip-btn" data-act="shop-sugg" data-n="${esc(n)}">+ ${esc(n)}</button>`).join('')}</div>`:''}
+    ${L==='Деду'&&sugg.length?'<p class="hint" style="margin:0">Это то, что раньше брали деду, — нажмите, чтобы добавить в корзину.</p>':''}</section>
+  <section class="section"><div class="card tlist">${open.map(i=>`<div class="task"><button class="tick" data-act="shop-done" data-i="${i.id}" aria-label="Куплено: ${esc(i.name)}"></button>
+    <span class="task-body"><span class="task-title">${esc(i.name)}${+i.qty>1?' · '+fmt(+i.qty,1)+' '+esc(i.unit||''):''}</span><span class="task-meta">${(()=>{ const p=live('shopPrices').filter(x=>x.name===normName(i.name)).sort((a,b)=>a.price-b.price)[0]; return p?'дешевле всего: '+esc(p.store)+' '+money(p.price):'цены ещё нет'; })()}</span></span>
+    <button class="ghost" data-act="shop-rm" data-i="${i.id}" aria-label="Убрать ${esc(i.name)}">✕</button></div>`).join('')||'<p class="hint" style="margin:8px">Список пуст — впишите товары строкой выше, через запятую.</p>'}</div></section>
+  ${open.length?`<section class="section"><div class="section-head"><h2>Иду в магазин</h2></div><div class="chips">${storeList().map(s=>`<button class="chip-btn" data-act="shop-go" data-s="${esc(s.name)}">${esc(s.name)}</button>`).join('')}</div></section>`:''}
+  ${plan?`<section class="section"><div class="section-head"><h2>Где что купить</h2><span class="hint">по ценам, которые вы записали</span></div><div class="card">
+    ${plan.worth?Object.entries(plan.split).map(([s,v])=>`<p style="margin:0"><strong>${esc(s)}:</strong> ${v.items.map(i=>esc(i.name)).join(', ')} — ${money(v.sum)}</p>`).join('')+`<p style="margin:0">Экономия ≈ ${money(plan.saving)} против одного магазина (лишняя остановка ≈ ${money(plan.stopCost)}).</p>`
+      :`<p style="margin:0">Выгоднее всё взять в <strong>${esc(plan.single.s)}</strong> — ≈ ${money(plan.single.sum)}.${plan.saving>0.5?` Разделить по магазинам — экономия всего ${money(plan.saving)}, не стоит лишней поездки.`:''}</p>`}
+    ${plan.unknown.length?`<p class="hint" style="margin:0">Цены нет: ${plan.unknown.map(i=>esc(i.name)).join(', ')} — запишите её в магазине.</p>`:''}
+    <a class="btn" href="${esc(routeUrl(plan.worth?Object.keys(plan.split):[plan.single.s]))}" target="_blank" rel="noopener">Открыть маршрут в Google Картах</a></div></section>`:''}
+  <section class="section"><details ${ui.open.shopset?'open':''} data-det="shopset"><summary>Магазины и адрес дома</summary><div class="card">
+    <label class="f">Адрес дома (откуда ехать)<input id="sh-home" data-set="homeAddr" value="${esc(home)}" placeholder="улица, посёлок"></label>
+    ${storeList().map(s=>`<div class="row"><span style="min-width:70px">${esc(s.name)}</span><input data-storeaddr="${esc(s.name)}" value="${esc(s.address||'')}" placeholder="адрес филиала" style="flex:1"></div>`).join('')}
+    <div class="row"><input id="sh-newstore" placeholder="ещё магазин"><button data-act="store-add">Добавить</button></div>
+    <label class="f">Делить покупки по магазинам, если экономия больше, €<input id="sh-min" inputmode="decimal" data-set="splitMin" value="${esc(S.settings.splitMin||3)}"></label>
+  </div></details></section>`;
+}
+function addShopItems(text, list){
+  if(!S) S=blank();
+  for(let part of String(text).split(/[,;\n]+/)){ part=part.trim(); if(!part) continue;
+    let qty=1, unit=''; const m=part.match(/^(\d+[.,]?\d*)\s*(кг|г|л|шт|уп|пач|бут)?\.?\s+(.+)$/i)||part.match(/^(.+?)\s+(\d+[.,]?\d*)\s*(кг|г|л|шт|уп|пач|бут)\.?$/i);
+    // количество отделяем, только если есть единица («2 кг картошки», «молоко 2 л»); «10 яиц» оставляем как написано
+    let name=part; if(m&&(/^\d/.test(m[1])?m[2]:m[3])){ if(/^\d/.test(m[1])){ qty=num(m[1]); unit=m[2]; name=m[3]; } else { name=m[1]; qty=num(m[2]); unit=m[3]; } }
+    S.shopItems.push(touch({id:uid(), list, name:name[0].toUpperCase()+name.slice(1), qty, unit, note:'', done:false}));
+  }
+}
+
+// ---- Пожелания к приложению («Сделай мне удобнее») ----
+const RST={new:['новое','warn'],accepted:['принято','ok'],done:['сделано','ok'],declined:['отклонено','bad']};
+function viewRequests(){
+  const R=live('requests').sort((a,b)=>b.createdAt-a.createdAt); if(!R.length) return '';
+  const owner=(ui.members||[]).some(m=>session&&m.user_id===session.user.id&&m.role==='owner')||!farm;
+  const open=R.filter(r=>r.status==='new'||r.status==='accepted');
+  return `<section class="section"><div class="section-head"><h2>Пожелания к приложению</h2>${owner&&open.length?'<button class="ghost" data-act="req-copy">Скопировать как задание для Claude Code</button>':''}</div>
+    <div class="card tlist">${R.slice(0,20).map(r=>`<div class="task"><span class="task-body"><span class="task-title">${esc(r.text)}</span><span class="task-meta">${shortDate(isoOf(new Date(r.createdAt)))}${r.by?' · '+esc(r.by):''} · <span class="pill ${RST[r.status][1]}">${RST[r.status][0]}</span></span></span>
+      ${owner?`<select data-reqstatus="${r.id}" aria-label="Статус пожелания">${Object.entries(RST).map(([k,[l]])=>`<option value="${k}" ${r.status===k?'selected':''}>${l}</option>`).join('')}</select>`:''}</div>`).join('')}</div></section>`;
+}
+const reqTask=()=>'Пожелания Насти к приложению «Рационы подворья» (папка Desktop\\Cloud AI\\podvorye). Для каждого: обсуди со мной, надо ли, и если да — сделай просто и удобно, ничего не ломая; после — npm run build и npm run deploy.\n\n'+
+  live('requests').filter(r=>r.status==='new'||r.status==='accepted').map((r,i)=>`${i+1}. ${r.text} (от ${shortDate(isoOf(new Date(r.createdAt)))}, статус: ${RST[r.status][0]})`).join('\n');
+
+// ---- Что требует внимания (сводка на первой вкладке) ----
+function attention(){
+  if(!S) return [];
+  const A=[], today=todayISO();
+  const bills=live('bills').filter(b=>!b.paid&&b.due<=addDaysISO(today,3));
+  if(bills.length) A.push({lv:bills.some(b=>b.due<today)?'bad':'warn', who:'Счета', txt:bills.map(b=>`${b.to}${b.amount?' '+money(+b.amount):''} — ${b.due<today?'просрочен':b.due===today?'сегодня':'до '+shortDate(b.due)}`).join(' · '), go:'home:bills'});
+  const low=S.animals.length?lowStock():[]; if(low.length) A.push({lv:low[0].days<7?'bad':'warn', who:'Корма', txt:low.map(x=>`${x.name} — на ${fmt(x.days,0)} дн.`).join(' · '), go:'stock'});
+  const heat=S.heat?heatCalc():null; if(heat&&heat.daysLeft!==null&&heat.daysLeft<14) A.push({lv:heat.daysLeft<5?'bad':'warn', who:'Дрова', txt:`хватит на ${fmt(heat.daysLeft,0)} дн.`, go:'stock:heat'});
+  const car=carAlerts().filter(a=>a.at<=Date.now()&&dayDiff(today,a.due)>=0).filter((a,i,arr)=>arr.findIndex(b=>b.car.id===a.car.id&&b.what===a.what)===i);
+  if(car.length) A.push({lv:'warn', who:'Машина', txt:car.map(a=>`${a.what} — ${shortDate(a.due)}`).join(' · '), go:'home:car'});
+  return A;
+}
+
+function viewHome(){
+  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки']];
+  return `<div class="seg wide" style="margin:6px 0 10px">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
+    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop}[v])();
+}
+const rationSeg=()=>`<div class="seg" style="margin:6px 0 4px"><button data-tab="ration" aria-pressed="${ui.tab==='ration'}">Рацион</button><button data-tab="tips" aria-pressed="${ui.tab==='tips'}">Советы</button></div>`;
+
+// ---- Общие напоминания: дела, счета, машина ----
+function allReminders(){
+  const R=[], at9=(iso)=>new Date(iso+'T09:00:00').getTime();
+  for(const t of liveTasks()){ const a=remindAt(t); if(a!==null) R.push({key:'t|'+t.id+'|'+t.due+'|'+t.time+'|'+t.remind, at:a, title:t.title, body:(t.time?t.time+' · ':'')+SECS[t.sec]+(t.note?' · '+t.note.slice(0,80):''), tag:t.id}); }
+  for(const b of live('bills').filter(b=>!b.paid&&b.due)){ for(const [d,w] of [[-3,'через 3 дня'],[0,'сегодня']]) R.push({key:'b|'+b.id+'|'+b.due+'|'+d, at:at9(addDaysISO(b.due,d)), title:'Оплатить: '+b.to, body:`Срок ${w}${b.amount?' · '+money(+b.amount):''}`, tag:b.id}); }
+  for(const c of carAlerts()) R.push(c);
+  return R;
 }
 
 /* ---------- Дела (ежедневник) ---------- */
@@ -1291,13 +1742,13 @@ async function checkReminders(){
   if(!S||!('Notification' in window)||Notification.permission!=='granted') return;
   let seen={}; try{ seen=JSON.parse(localStorage.getItem(LS_NOTI)||'{}'); }catch(e){}
   const now=Date.now(); let changed=false;
-  for(const t of liveTasks()){
-    const at=remindAt(t), key=t.id+'|'+t.due+'|'+t.time+'|'+t.remind; if(at===null||seen[key]) continue;
-    if(now>=at&&now-at<6*36e5){
-      seen[key]=now; changed=true;
+  for(const r of allReminders()){
+    if(seen[r.key]) continue;
+    if(now>=r.at&&now-r.at<6*36e5){
+      seen[r.key]=now; changed=true;
       try{ const reg=await navigator.serviceWorker.ready;
-        await reg.showNotification(t.title,{body:(t.time?t.time+' · ':'')+SECS[t.sec]+(t.note?' · '+t.note.slice(0,80):''), icon:'./pwa-192x192.png', badge:'./favicon.png', tag:t.id, data:{task:t.id}}); }
-      catch(e){ try{ new Notification(t.title,{body:SECS[t.sec]}); }catch(e2){} }
+        await reg.showNotification(r.title,{body:r.body, icon:'./pwa-192x192.png', badge:'./favicon.png', tag:r.tag}); }
+      catch(e){ try{ new Notification(r.title,{body:r.body}); }catch(e2){} }
     }
   }
   if(changed) try{ localStorage.setItem(LS_NOTI, JSON.stringify(seen)); }catch(e){}
@@ -1338,7 +1789,9 @@ function viewTasks(){
   const body=groups.filter(g=>g[1].length).map(([h,list,k])=>{ ui.groupDates=k==='dates'||k==='over'; const rows=list.map(taskRow).join(''); ui.groupDates=false;
     return `<section class="section tgroup ${k||''}"><div class="section-head"><h2>${h}</h2><span class="hint">${list.length}</span></div><div class="card tlist">${rows}</div></section>`; }).join('');
   const notif='Notification' in window&&Notification.permission!=='granted'&&Notification.permission!=='denied';
+  const att=isToday?attention():[];
   return `
+  ${att.length?`<section class="section"><div class="section-head"><h2>Что требует внимания</h2></div><div class="advice">${att.map(a=>`<button class="tip ${a.lv} tip-btn" data-act="go" data-go="${a.go}"><div><span class="who">${esc(a.who)}</span><p>${esc(a.txt)}</p></div></button>`).join('')}</div></section>`:''}
   <section class="section">
     <div class="day-nav"><button class="ghost big-btn" data-act="day-step" data-n="-1" aria-label="Предыдущий день">‹</button>
       <button class="day-title" data-act="cal-toggle">${esc(dayLabel(day))}${isToday?'':` <span class="hint">· ${new Date(day+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'})}</span>`}</button>
@@ -1437,7 +1890,8 @@ function animalForm(a){
 }
 function viewHerd(){
   const list=S&&S.animals.length?S.animals.map(animalForm).join(''):'<p class="hint">Животных пока нет.</p>';
-  return `
+  // настройки — внизу, главное (животные) — сверху
+  const settings=`
   ${S?`<section class="section"><div class="section-head"><h2>Отчёт на почту</h2><span class="hint">рацион, запасы, деньги, продуктивность</span></div>
     <div class="card">
       <label class="f">Ваша почта<input type="email" id="set-email" data-set="email" value="${esc(S.settings.email||'')}" placeholder="name@example.com" autocomplete="email"></label>
@@ -1449,6 +1903,7 @@ function viewHerd(){
       <p class="hint" style="margin:0">Каждый понедельник утром отчёт сам придёт на эту почту. Кнопка выше — чтобы отправить его прямо сейчас из почты телефона.</p>
     </div></section>
   ${viewTeam()}
+  ${viewRequests()}
   <section class="section"><div class="section-head"><h2>Без интернета и резервная копия</h2></div>
     <div class="card">
       <p style="margin:0">Приложение работает без интернета: всё сохраняется в телефоне и само отправляется, когда появится связь. Помощник и фото — только со связью. Для надёжности можно скачать копию данных.</p>
@@ -1458,7 +1913,8 @@ function viewHerd(){
         <div class="row" style="margin-top:8px"><button class="danger" data-act="import-yes">Заменить</button><button data-act="import-no">Отмена</button></div></div>`:''}
       <p class="hint" style="margin:0">Переезд из первой версии (на claude.ai): там во вкладке «Хозяйство» нажмите «Скачать данные (.json)», а здесь — «Загрузить данные из файла».</p>
     </div></section>
-  <section class="section"><details><summary>Где хранятся данные</summary><div class="card"><p style="margin:0">Данные хозяйства хранятся в телефоне и в защищённой базе Supabase (сервер в ЕС, Стокгольм). Их видят только участники хозяйства — те, кого владелец пригласил кодом. Фото и вопросы помощнику уходят в Claude только когда вы нажимаете кнопку; перед отправкой фото уменьшается и из него удаляются данные о месте съёмки, сами фото нигде не сохраняются. Ключ Claude хранится только на сервере.</p></div></details></section>`:viewTeam()}
+  <section class="section"><details><summary>Где хранятся данные</summary><div class="card"><p style="margin:0">Данные хозяйства хранятся в телефоне и в защищённой базе Supabase (сервер в ЕС, Стокгольм). Их видят только участники хозяйства — те, кого владелец пригласил кодом. Фото и вопросы помощнику уходят в Claude только когда вы нажимаете кнопку; перед отправкой фото уменьшается и из него удаляются данные о месте съёмки, сами фото нигде не сохраняются. Ключ Claude хранится только на сервере.</p></div></details></section>`:viewTeam()}`;
+  return `
   <section class="section"><div class="section-head"><h2>Животные</h2><span class="hint">вес, состояние и корма</span></div>${list}
     <div class="card"><div class="hint">Добавить</div>${addButtons()}</div></section>
   <section class="section"><div class="section-head"><h2>Свои корма</h2><span class="hint">которых нет в справочнике</span></div>
@@ -1486,7 +1942,8 @@ function viewHerd(){
   <section class="section"><details><summary>Справочник кормов (питательность 1 кг)</summary>
     <div class="card"><div class="tbl-wrap"><table class="refs"><thead><tr><th>Корм</th><th class="n">корм. ед.</th><th class="n">протеин, г</th><th class="n">Ca, г</th><th class="n">P, г</th><th class="n">каротин, мг</th><th class="n">сух. в-во</th></tr></thead><tbody>
     ${FEEDS.map(f=>`<tr><td>${feedLink(f.id)}${f.custom?'<span class="small">свой корм</span>':f.overridden?'<span class="small">по анализу</span>':''}</td><td class="n">${fmt(f.kued,2)}</td><td class="n">${fmt(f.pp,0)}</td><td class="n">${fmt(f.ca,1)}</td><td class="n">${fmt(f.p,1)}</td><td class="n">${fmt(f.car,0)}</td><td class="n">${fmt(f.dm*100,0)}%</td></tr>`).join('')}
-    </tbody></table></div><p class="hint" style="margin:0">Средние значения из зоотехнических справочников. Для кур расчёт ведётся в ккал обменной энергии и сыром протеине.</p></div></details></section>`;
+    </tbody></table></div><p class="hint" style="margin:0">Средние значения из зоотехнических справочников. Для кур расчёт ведётся в ккал обменной энергии и сыром протеине.</p></div></details></section>
+  ${settings}`;
 }
 
 /* ---------- События ---------- */
@@ -1524,6 +1981,85 @@ document.addEventListener('click',e=>{
   if(act==='notif-on'){ Notification.requestPermission().then(()=>{ render(); checkReminders(); }).catch(()=>{}); return; }
   if(act==='todo-buy'){ const f=F[t.dataset.feed]; if(f){ newTask({title:'Купить: '+f.name.toLowerCase(), sec:'farm', due:todayISO()}); save(); note='Дело «Купить: '+f.name.toLowerCase()+'» добавлено на сегодня во вкладку «Дела».'; render(); setTimeout(()=>{ note=null; render(); },4000); } return; }
   if(act==='seed-ours'){ seedOurFarm(); return; }
+  if(act==='stock-view'){ ui.stockView=t.dataset.v; render(); return; }
+  if(act==='req-open'){ ui.chat.req=true; render(); setTimeout(()=>{ const el=document.getElementById('req-text'); if(el) el.focus(); },40); return; }
+  if(act==='req-close'){ ui.chat.req=false; render(); return; }
+  if(act==='req-send'){ const v=(document.getElementById('req-text').value||'').trim(); if(!v) return; if(!S) S=blank();
+    S.requests.push(touch({id:uid(), text:v, by:session&&session.user.email||'', status:'new', createdAt:Date.now()})); ui.chat.req=false; save();
+    ui.chat.turns.push({role:'assistant',content:'Спасибо, пожелание записала и передала владельцу хозяйства 💛 Статус будет виден во вкладке «Хозяйство».'}); render(); return; }
+  if(act==='req-copy'){ copyText(reqTask()).then(ok=>flash(ok?'Скопировано. Вставьте в чат Claude Code в VS Code.':'Не получилось скопировать.')); return; }
+  if(act==='go'){ const [tab,sub]=t.dataset.go.split(':'); ui.tab=tab; if(tab==='home') ui.homeView=sub; if(tab==='stock') ui.stockView=sub||'feed'; render(); window.scrollTo(0,0); return; }
+  if(act==='home-view'){ ui.homeView=t.dataset.v; ui.carEdit=null; ui.shopStore=null; render(); return; }
+  // счета
+  if(act==='bill-close'&&t.classList.contains('sheet-bg')&&e.target.closest('[data-stop]')) return;
+  if(act==='bill-new'){ ui.bill='new'; ui.billDraft=null; ui.confirmBill=false; render(); return; }
+  if(act==='bill-open'){ ui.bill=t.dataset.b; ui.confirmBill=false; ui.billPay=null; render(); return; }
+  if(act==='bill-close'){ ui.bill=null; ui.billDraft=null; ui.billPay=null; render(); return; }
+  if(act==='bill-save'){ billSave(); return; }
+  if(act==='bill-pay'){ const b=live('bills').find(x=>x.id===t.dataset.b); if(!b) return; if(b.varies||!(+b.amount)){ ui.bill=b.id; ui.billPay=b.id; render(); setTimeout(()=>{ const el=document.getElementById('bl-paid'); if(el) el.focus(); },40); } else billPaid(b.id); return; }
+  if(act==='bill-pay-ok'){ const v=num(document.getElementById('bl-paid').value); if(!(v>0)) return; billPaid(t.dataset.b, v); return; }
+  if(act==='bill-pay-no'){ ui.billPay=null; render(); return; }
+  if(act==='bill-copy'){ const b=live('bills').find(x=>x.id===t.dataset.b); if(b) copyText(billReq(b)).then(ok=>flash(ok?'Реквизиты скопированы — вставьте в интернет-банк.':'Не получилось скопировать — выделите текст вручную.')); return; }
+  if(act==='bill-del'){ ui.confirmBill=true; render(); return; }
+  if(act==='bill-del-no'){ ui.confirmBill=false; render(); return; }
+  if(act==='bill-del-yes'){ const b=live('bills').find(x=>x.id===ui.bill); if(b){ b.deleted=true; touch(b); } ui.bill=null; ui.confirmBill=false; save(); render(); return; }
+  // учёт
+  if(act==='ym'){ const d=new Date((ui.ym||todayISO().slice(0,7))+'-15T12:00:00'); d.setMonth(d.getMonth()+ +t.dataset.n); ui.ym=isoOf(d).slice(0,7); render(); return; }
+  if(act==='m-type'){ ui.mType=t.dataset.t; render(); return; }
+  if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
+    addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
+  if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
+  if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
+  if(act==='m-csv'){ saveFile(`Учёт подворья ${todayISO()}.csv`, moneyCSV()); return; }
+  // машина
+  if(act==='car-pick'){ ui.car=t.dataset.c; render(); return; }
+  if(act==='car-edit'){ ui.carEdit=t.dataset.c; render(); return; }
+  if(act==='car-cancel'){ ui.carEdit=null; render(); return; }
+  if(act==='car-save'){ const g=(k)=>document.getElementById('cr-'+k), name=g('name').value.trim()||'Машина'; if(!S) S=blank();
+    const p={name, plate:g('plate').value.trim().toUpperCase(), fuel:g('fuel').value, inspection:g('insp').value, octa:g('octa').value, kasko:g('kasko').value,
+      serviceKm:num(g('skm').value)||'', serviceMonths:num(g('smo').value)||'', lastServiceKm:num(g('lkm').value)||'', lastServiceDate:g('ldt').value};
+    if(t.dataset.c==='new'){ const c=touch(Object.assign({id:uid()},p)); S.cars.push(c); ui.car=c.id; } else touch(Object.assign(live('cars').find(x=>x.id===t.dataset.c)||{},p));
+    ui.carEdit=null; save(); render(); return; }
+  if(act==='car-del'){ const c=live('cars').find(x=>x.id===t.dataset.c); if(c){ c.deleted=true; touch(c); } ui.carEdit=null; ui.car=null; save(); render(); return; }
+  if(act==='fuel-add'){ const g=(k)=>document.getElementById('fu-'+k); let l=num(g('l').value), s=num(g('s').value), p=num(g('p').value);
+    if(!l&&s&&p) l=s/p; if(!s&&l&&p) s=l*p; if(!p&&l&&s) p=s/l;
+    if(!(l>0&&s>0)){ flash('Впишите два из трёх: литры, сумму или цену за литр.'); return; }
+    const c=live('cars').find(x=>x.id===ui.car); if(!c) return; const st=carStats(c), odo=num(g('o').value);
+    if(odo&&st.odo&&odo<st.odo&&!ui.odoOk){ ui.odoOk=true; flash(`Пробег ${fmt(odo,0)} меньше прошлого (${fmt(st.odo,0)}). Проверьте одометр; если всё верно — нажмите «Записать» ещё раз.`); return; }
+    ui.odoOk=false;
+    const f=touch({id:uid(), car:c.id, date:g('d').value||todayISO(), liters:Math.round(l*100)/100, sum:r2(s), price:Math.round(p*1000)/1000, odo:odo||'', full:g('full').checked, station:g('st').value.trim(), sec:'me'});
+    S.fuel.push(f); addMoney({type:'out', amount:f.sum, sec:'me', cat:'Топливо', note:`${c.name}: ${fmt(f.liters,1)} л${f.station?' · '+f.station:''}`, date:f.date});
+    ui.fuelDraft=null; save(); flash(`Заправка записана: ${fmt(f.liters,1)} л, ${money(f.sum)} — и в «Учёт».`); return; }
+  // покупки
+  if(act==='shop-list'){ ui.shopList=t.dataset.l; render(); return; }
+  if(act==='shop-newlist'){ const n=prompt('Название нового списка'); if(n&&n.trim()){ S.settings.shopLists=[...shopLists(), n.trim()]; ui.shopList=n.trim(); save(); render(); } return; }
+  if(act==='shop-add'){ const el=document.getElementById('sh-add'); if(el&&el.value.trim()){ addShopItems(el.value, ui.shopList||shopLists()[0]); save(); render(); setTimeout(()=>{ const q=document.getElementById('sh-add'); if(q) q.focus(); },30); } return; }
+  if(act==='shop-sugg'){ addShopItems(t.dataset.n, ui.shopList||shopLists()[0]); save(); render(); return; }
+  if(act==='shop-done'){ const i=live('shopItems').find(x=>x.id===t.dataset.i); if(i){ i.done=true; i.boughtAt=Date.now(); touch(i); save(); render(); } return; }
+  if(act==='shop-rm'){ const i=live('shopItems').find(x=>x.id===t.dataset.i); if(i){ i.deleted=true; touch(i); save(); render(); } return; }
+  if(act==='shop-go'){ ui.shopStore=t.dataset.s; ui.shopSession=uid(); render(); window.scrollTo(0,0); return; }
+  if(act==='shop-tick'){ const i=live('shopItems').find(x=>x.id===t.dataset.i); if(!i) return;
+    if(i.done&&i.session===ui.shopSession){ i.done=false; i.session=null; i.sessionStore=null; } else { i.done=true; i.boughtAt=Date.now(); i.session=ui.shopSession; i.sessionStore=ui.shopStore; }
+    touch(i); save(); render(); return; }
+  if(act==='shop-exit'){ ui.shopStore=null; render(); return; }
+  if(act==='shop-finish'){ const bought=live('shopItems').filter(i=>i.done&&i.session===ui.shopSession);
+    const total=r2(bought.reduce((s,i)=>s+(+i.price||0)*(+i.qty||1),0));
+    if(total>0) addMoney({type:'out', amount:total, sec:ui.shopList==='Деду'?'me':'home', cat:'Продукты', note:`${ui.shopStore}: ${bought.length} товаров (${ui.shopList})`});
+    const st=ui.shopStore; ui.shopStore=null; save(); flash(total>0?`Покупка в ${st} — ${money(total)} записана в «Учёт».`:`Покупки отмечены. Цен не было — в «Учёт» ничего не записано.`); return; }
+  if(act==='store-add'){ const el=document.getElementById('sh-newstore'), n=el&&el.value.trim(); if(!n) return; if(!live('stores').length) S.stores=STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}));
+    S.stores.push(touch({id:uid(),name:n,address:''})); ui.open.shopset=true; save(); render(); return; }
+  if(act==='heat-dims'){ const g=(k)=>num(document.getElementById('ht-'+k).value); ui.dimW=g('w'); ui.dimD=g('d'); ui.dimH=g('h');
+    const L=ui.dimW*ui.dimD*ui.dimH/1000; if(L>0){ S.heat=Object.assign(heatDefaults(), S.heat||{}); S.heat.boilerL=Math.round(L); save(); } render(); return; }
+  if(act==='heat-buy'){
+    const g=(k)=>document.getElementById('hb-'+k), qty=num(g('qty').value), sum=num(g('sum').value), unit=g('unit').value, date=g('date').value||todayISO();
+    if(!(qty>0)) return; S.heat=Object.assign(heatDefaults(), S.heat||{}); const h=S.heat;
+    const L=unit==='bag'?qty*(+h.bagL||40):unit==='m3l'?qty*1000:qty*1000*SOLID.stacked/SOLID.loose;
+    const c=heatCalc(); h.stockL=(c.left||0)+L; h.stockDate=todayISO();
+    if(sum>0){ if(unit==='bag') h.bagPrice=Math.round(sum/qty*100)/100; else h.m3Price=Math.round(sum/(L/1000)*100)/100;
+      S.money.push({id:uid(), date, type:'out', amount:sum, sec:'home', cat:'Дрова', note:`${fmt(qty,1)} ${unit==='bag'?'мешков':unit==='m3l'?'м³ насыпью':'м³ складом'}`, updatedAt:Date.now()}); }
+    h.buys=h.buys||[]; h.buys.push({id:uid(), date, qty, unit, sum});
+    save(); render(); return; }
+  if(act==='heat-ask'){ ui.chat=ui.chat||{turns:[]}; ui.chat.open=true; ui.chat.draft='Посмотри мой расчёт по дровам и отоплению. Как сделать в доме теплее и потратить меньше денег? Что поменять в первую очередь?'; render(); return; }
   if(act==='auth-go'){ authGo(); return; }
   if(act==='auth-switch'){ const el=document.getElementById('au-email'); if(el) ui.auEmail=el.value; ui.authMode=ui.authMode==='up'?'in':'up'; authErr=''; render(); return; }
   if(act==='sign-out'){ ui.confirmOut=true; render(); return; }
@@ -1544,7 +2080,7 @@ document.addEventListener('click',e=>{
   if(act==='chat-stop'){ ui.chat&&ui.chat.ctl&&ui.chat.ctl.abort(); return; }
   if(act==='chat-clear'){ if(ui.chat&&!ui.chat.busy){ ui.chat.turns=[]; ui.chat.err=''; } render(); return; }
   if(act==='chat-quick'){ const el=document.getElementById('chat-in'); if(el){ el.value=t.dataset.q; chatSend(); } return; }
-  if(act==='photo-open'){ ui.photo={mode:'weigh',files:[],urls:[]}; render(); return; }
+  if(act==='photo-open'){ ui.photo={mode:t.dataset.m||'weigh',files:[],urls:[]}; render(); return; }
   if(act==='photo-close'){ if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo.urls.forEach(u=>URL.revokeObjectURL(u)); } ui.photo=null; render(); return; }
   if(act==='photo-mode'){ const p=ui.photo; if(p&&!p.busy){ p.mode=t.dataset.m; p.res=null; p.text=''; p.err=''; if(p.mode!=='store'&&p.files.length>1){ p.files=p.files.slice(0,1); p.urls.slice(1).forEach(u=>URL.revokeObjectURL(u)); p.urls=p.urls.slice(0,1); } } render(); return; }
   if(act==='photo-run'){ photoRun(); return; }
@@ -1600,7 +2136,9 @@ document.addEventListener('click',e=>{
       const fid=t.dataset.feed, inp=document.getElementById('add-'+fid), v=num(inp.value); if(v<=0) return;
       const st=S.feeds[fid]=S.feeds[fid]||{}; const daily=herdDaily(S.settings.includePlanned)[fid]||0;
       const since=st.stockDate?Math.max(0,dayDiff(st.stockDate,todayISO())):0; const left=Math.max(0,(+st.stock||0)-daily*since);
-      st.stock=Math.round(left+v); st.stockDate=todayISO(); ui.open[fid]=true; save(); render(); break;
+      st.stock=Math.round(left+v); st.stockDate=todayISO(); ui.open[fid]=true;
+      const ppk=pricePerKg(fid); if(ppk>0){ addMoney({type:'out', amount:r2(v*ppk), sec:'farm', cat:'Корм', note:`${F[fid].name}: ${fmt(v,0)} кг`}); save(); flash(`Приход записан, ${money(r2(v*ppk))} — в «Учёт» как расход на корм.`); break; }
+      save(); render(); break;
     }
   }
 });
@@ -1608,7 +2146,8 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey&&e.target&&e.target.id==='chat-in'){ e.preventDefault(); chatSend(); return; }
   if(e.key==='Enter'&&e.target&&(e.target.id==='au-pw'||e.target.id==='au-email')){ e.preventDefault(); authGo(); return; }
   if(e.key==='Enter'&&e.target&&e.target.id==='qa'){ e.preventDefault(); quickAdd(); return; }
-  if(e.key==='Escape'){ if(ui.task){ ui.task=null; ui.taskDraft=null; } else if(ui.feed) ui.feed=null; else if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo=null; } else if(ui.chat&&ui.chat.open){ ui.chat.open=false; } else return; render(); }
+  if(e.key==='Enter'&&e.target&&e.target.id==='sh-add'){ e.preventDefault(); document.querySelector('[data-act="shop-add"]').click(); return; }
+  if(e.key==='Escape'){ if(ui.task){ ui.task=null; ui.taskDraft=null; } else if(ui.bill){ ui.bill=null; ui.billPay=null; } else if(ui.feed) ui.feed=null; else if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo=null; } else if(ui.chat&&ui.chat.open){ ui.chat.open=false; } else return; render(); }
 });
 document.addEventListener('toggle',e=>{ const d=e.target; if(d.dataset&&d.dataset.det) ui.open[d.dataset.det]=d.open; },true);
 document.addEventListener('change',e=>{
@@ -1616,6 +2155,18 @@ document.addEventListener('change',e=>{
   if(t.dataset.daynote){ if(!S) S=blank(); const v=t.value.trim(); if(v) S.days[t.dataset.daynote]=v; else delete S.days[t.dataset.daynote]; save(); return; }
   if(!S) return;
   if(t.dataset.flag){ S.settings[t.dataset.flag]=t.checked; save(); render(); return; }
+  if(t.dataset.reqstatus){ const r=live('requests').find(x=>x.id===t.dataset.reqstatus); if(r){ r.status=t.value; touch(r); save(); render(); } return; }
+  if(t.dataset.shopprice){ const i=live('shopItems').find(x=>x.id===t.dataset.shopprice); if(!i) return; const v=r2(num(t.value)); i.price=v||''; touch(i);
+    if(v>0&&i.sessionStore) S.shopPrices.push(touch({id:uid(), name:normName(i.name), store:i.sessionStore, price:v, date:todayISO()}));   // цена на полке — за штуку/единицу
+    save(); render(); return; }
+  if(t.dataset.storeaddr){ if(!live('stores').length) S.stores=STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}));
+    const s=live('stores').find(x=>x.name===t.dataset.storeaddr); if(s){ s.address=t.value.trim(); touch(s); } ui.open.shopset=true; save(); return; }
+  if(t.dataset.heat){
+    S.heat=Object.assign(heatDefaults(), S.heat||{}); const k=t.dataset.heat, h=S.heat;
+    if(k==='stockBags'){ if(t.value.trim()===''){ h.stockL=null; h.stockDate=null; } else { h.stockL=Math.max(0,num(t.value))*(+h.bagL||40); h.stockDate=todayISO(); } }
+    else h[k]=['wood','moist','stove','house'].includes(k)?t.value:(t.value.trim()===''?'':Math.max(0,num(t.value)));
+    save(); render(); return;
+  }
   if(t.dataset.jset){ ui[t.dataset.jset]=t.value; render(); return; }
   if(t.dataset.photo&&ui.photo){ const p=ui.photo; p.urls.forEach(u=>URL.revokeObjectURL(u));
     p.files=[...(t.files||[])].slice(0,p.mode==='store'?IMG_MAX:1); p.urls=p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.text=''; p.err=''; render(); return; }
