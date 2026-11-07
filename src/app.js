@@ -280,7 +280,7 @@ async function initStore(){
   let d=null; try{ d=JSON.parse(localStorage.getItem(LS)||'null'); }catch(e){}
   S=d?normalize(d):null; dirty=!!meta.dirty; loaded=true;
   session=await getSession();
-  if(!session) authView=true;
+  if(!session){ authView=true; setSync('local','Вход не выполнен'); }
   render();
   if(session) connect();
   onAuth(s=>{ const was=!!session; session=s; if(s&&!was) connect(); });
