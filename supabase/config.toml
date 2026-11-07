@@ -1,0 +1,18 @@
+project_id = "zluiwncfigibykwyxhcj"
+
+[auth]
+site_url = "https://cesarcomando.github.io/podvorye/"
+additional_redirect_urls = ["http://localhost:5173", "http://localhost:4173"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+double_confirm_changes = true
+secure_password_change = false
+
+[functions.ask-farm]
+verify_jwt = false
+
+[functions.weekly-report]
+verify_jwt = false

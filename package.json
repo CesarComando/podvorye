@@ -1,0 +1,23 @@
+{
+  "name": "podvorye",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/icons.mjs",
+    "deploy": "vite build && gh-pages -d dist --dotfiles"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.119.0"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "sharp": "^0.34.0",
+    "supabase": "^3.0.0",
+    "vite": "^7.1.0",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}
