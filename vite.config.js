@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon.png', 'favicon.png'],
       manifest: {
-        name: 'Рационы подворья',
-        short_name: 'Подворье',
+        name: 'MIGLANI',
+        short_name: 'MIGLANI',
         description: 'Рационы, запасы кормов, журнал надоев и яиц, помощник по хозяйству.',
         lang: 'ru',
         start_url: './',

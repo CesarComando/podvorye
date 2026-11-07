@@ -1,4 +1,4 @@
-// Еженедельный отчёт на почту. Вызывается по расписанию (pg_cron, понедельник утром) с секретом.
+﻿// Еженедельный отчёт на почту. Вызывается по расписанию (pg_cron, понедельник утром) с секретом.
 // Текст отчёта собирает само приложение при каждом сохранении (farms.report) — здесь только отправка.
 //
 // Секреты (Supabase → Edge Functions → Secrets):
@@ -60,13 +60,13 @@ Deno.serve(async (req) => {
     const to = String(f.report_email).trim()
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) continue
     const html = `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.5;color:#1E2B1C;max-width:640px">
-      <h2 style="color:#3A8A3C;margin:0 0 12px">🌾 ${esc(f.name || 'Подворье')} — отчёт за неделю</h2>
+      <h2 style="color:#3A8A3C;margin:0 0 12px">🌾 ${esc('MIGLANI')} — отчёт за неделю</h2>
       <pre style="white-space:pre-wrap;font-family:inherit;margin:0">${esc(f.report)}</pre>
       <p style="color:#5E6B55;font-size:13px;margin-top:20px">Данные на ${new Date(f.updated_at).toLocaleDateString('ru-RU', { timeZone: 'Europe/Riga' })}. Отключить отчёт — убрать почту во вкладке «Хозяйство».</p></div>`
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from, to: [to], subject: `Подворье: отчёт за неделю`, html, text: f.report }),
+      body: JSON.stringify({ from, to: [to], subject: `MIGLANI: отчёт за неделю`, html, text: f.report }),
     })
     const ok = r.ok
     if (ok) await admin.from('farms').update({ report_sent_at: new Date().toISOString() }).eq('id', f.id)

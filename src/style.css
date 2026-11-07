@@ -139,8 +139,13 @@ nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surf
   padding:6px max(8px,env(safe-area-inset-right,0px)) calc(6px + env(safe-area-inset-bottom,0px)) max(8px,env(safe-area-inset-left,0px))}
 header.top .sync{max-width:46%}
 header.top .sync span{overflow:hidden;text-overflow:ellipsis}
-nav.tabs .in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(6,1fr);gap:0}
-nav.tabs button{font-size:11px!important;padding-inline:0!important}
+nav.tabs .in{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:0}
+nav.tabs button{font-size:13px!important;padding-inline:0!important}
+nav.tabs button svg{width:26px!important;height:26px!important}
+/* подразделы внутри «Дом» и «Хозяйство» */
+.subnav{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px}
+.subnav button{flex:1 1 auto;min-height:42px;border-radius:999px;font-size:14px;padding:6px 12px;background:var(--surface)}
+.subnav button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 /* Дом, покупки, сводка */
 .seg.wide{display:flex;width:100%}
 .seg.wide button{flex:1;font-size:14px;min-height:42px}

@@ -398,14 +398,16 @@ function lowStock(){
 const main=document.getElementById('main');
 function render(){
   applyFeedData();
-  document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===ui.tab||(ui.tab==='tips'&&b.dataset.tab==='ration')?'page':'false'));
+  const area=FARM_TABS.includes(ui.tab)?'farm':ui.tab; if(area==='farm') ui.lastFarm=ui.tab;
+  document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===area?'page':'false'));
   if(!loaded){ main.innerHTML=`<div class="card empty"><p class="hint">Загружаю данные хозяйства…</p>${note?`<div class="notice">${esc(note)}</div>`:''}</div>`; return; }
   const top=note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'';
   document.querySelector('nav.tabs').style.display=authView?'none':'';
   if(authView){ main.innerHTML=top+viewAuth(); return; }
-  if(!['tasks','home'].includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
+  if(FARM_TABS.includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+farmSeg()+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
   if(!S&&ui.tab==='home') S=blank();
-  main.innerHTML=top+({tasks:viewTasks,home:viewHome,ration:()=>rationSeg()+viewRation(),stock:viewStock,tips:()=>rationSeg()+viewTips(),journal:viewJournal,herd:viewHerd}[ui.tab])()+(ui.task?taskSheet():'')+(ui.bill?billSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
+  const fv={ration:viewRation,stock:viewStock,tips:viewTips,journal:viewJournal,herd:viewHerd};
+  main.innerHTML=top+(fv[ui.tab]?farmSeg()+fv[ui.tab]():({tasks:viewTasks,home:viewHome}[ui.tab]||viewTasks)())+(ui.task?taskSheet():'')+(ui.bill?billSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
 }
 function viewAuth(){
   const up=ui.authMode==='up';
@@ -632,10 +634,7 @@ function periodDays(){
   if(s.period==='custom') return Math.max(1,+s.customDays||1);
   let d=dayDiff(todayISO(), s.seasonEnd||'2027-05-01'); return d>0?d:1;
 }
-function viewStock(){
-  const seg=`<div class="seg" style="margin:6px 0 4px"><button data-act="stock-view" data-v="feed" aria-pressed="${ui.stockView!=='heat'}">Корма</button><button data-act="stock-view" data-v="heat" aria-pressed="${ui.stockView==='heat'}">Дрова и тепло</button></div>`;
-  return seg+(ui.stockView==='heat'?viewHeat():viewFeedStock());
-}
+function viewStock(){ return viewFeedStock(); }
 function viewFeedStock(){
   const s=S.settings, inc=s.includePlanned, daily=herdDaily(inc), days=periodDays();
   const used=FEEDS.filter(f=>daily[f.id]>0||(S.feeds[f.id]&&+S.feeds[f.id].stock>0));
@@ -1168,7 +1167,7 @@ ${farmSummary()}`;
 }
 function reportText(){
   const inc=S.settings.includePlanned, daily=herdDaily(inc), L=[];
-  L.push(`Отчёт подворья — ${new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}`,'');
+  L.push(`Отчёт MIGLANI — ${new Date().toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'})}`,'');
   L.push('РАЦИОН НА ДЕНЬ (всего):'); for(const [id,kg] of Object.entries(daily)) L.push(`— ${F[id].name}: ${fmt(kg,2)} кг`);
   const tot=S.animals.filter(a=>!a.planned).reduce((s,a)=>s+curCost(a).cost,0);
   if(tot) L.push('',`КОРМ СТОИТ: ${money(tot)} в день, ${money(tot*30)} в месяц`);
@@ -1213,7 +1212,7 @@ function growthSection(){
 
 /* ---------- ИИ-помощник (чат) ---------- */
 function chatInstr(){
-  return `Ты — дружелюбный помощник по подворью в приложении «Рационы подворья». Хозяйство находится в Латвии, цены в евро. Помогаешь хозяйке с кормлением, рационами, уходом, хранением кормов, здоровьем животных, учётом и развитием хозяйства.
+  return `Ты — дружелюбный помощник по подворью в приложении MIGLANI. Хозяйство находится в Латвии, цены в евро. Помогаешь хозяйке с кормлением, рационами, уходом, хранением кормов, здоровьем животных, учётом и развитием хозяйства.
 Тон: говори с ней тепло, по-дружески и с уважением — как заботливая, мудрая мама: бережно, спокойно, без поучений, упрёков и страшилок. Она добрый, тёплый и ранимый человек: сначала замечай, что у неё уже хорошо получается, ошибки называй мягко («давай попробуем вот так»), поддерживай и подбадривай, но не сюсюкай и не льсти. Обращайся на «ты» мягко и по-доброму. Если она переживает — сначала успокой, потом помоги по делу.
 Правила: отвечай по-русски, коротко и практично, конкретными цифрами там, где можно; опирайся на данные хозяйства ниже. Если по описанию есть признаки болезни или опасности (не ест, вздутие, колики, хромота, кровь, высокая температура) — прямо советуй срочно вызвать ветеринара. Про законы и субсидии Латвии (PVD, LAD, VID) отвечай в общих чертах и советуй уточнить на их сайтах. Если чего-то не знаешь — так и скажи. Без заголовков с # и без звёздочек; списки через «—».
 Подсказки по приложению (вкладки внизу): «Дела» — ежедневник, сводка «Что требует внимания», напоминания, «В Google Календарь»; «Дом» — Счета (напоминания, «Скопировать реквизиты», «Оплачено»), Учёт (доходы и расходы, выгрузка для Excel), Машина (заправки, расход, техосмотр, OCTA), Покупки (списки «Домой» и «Деду», режим «В магазине», где дешевле, маршрут); «Рацион» — нормы, «Составить рацион», «Подобрать дешевле», и рядом «Советы» с планом развития; «Запасы» — корма на складе и «Дрова и тепло» (сколько уходит на отопление и как сэкономить); «Журнал» — надои, яйца, вес; «Хозяйство» — животные, свои корма, отчёт на почту, участники. Кнопка с фотоаппаратом распознаёт весы, кувшин, счёт, чек заправки и склад. Если она просит то, что уже есть, — подскажи, где это. Если чего-то нет — предложи нажать «Предложить улучшение» внизу окна помощника.
@@ -1631,7 +1630,7 @@ function viewRequests(){
     <div class="card tlist">${R.slice(0,20).map(r=>`<div class="task"><span class="task-body"><span class="task-title">${esc(r.text)}</span><span class="task-meta">${shortDate(isoOf(new Date(r.createdAt)))}${r.by?' · '+esc(r.by):''} · <span class="pill ${RST[r.status][1]}">${RST[r.status][0]}</span></span></span>
       ${owner?`<select data-reqstatus="${r.id}" aria-label="Статус пожелания">${Object.entries(RST).map(([k,[l]])=>`<option value="${k}" ${r.status===k?'selected':''}>${l}</option>`).join('')}</select>`:''}</div>`).join('')}</div></section>`;
 }
-const reqTask=()=>'Пожелания Насти к приложению «Рационы подворья» (папка Desktop\\Cloud AI\\podvorye). Для каждого: обсуди со мной, надо ли, и если да — сделай просто и удобно, ничего не ломая; после — npm run build и npm run deploy.\n\n'+
+const reqTask=()=>'Пожелания Насти к приложению MIGLANI (папка Desktop\\Cloud AI\\podvorye). Для каждого: обсуди со мной, надо ли, и если да — сделай просто и удобно, ничего не ломая; после — npm run build и npm run deploy.\n\n'+
   live('requests').filter(r=>r.status==='new'||r.status==='accepted').map((r,i)=>`${i+1}. ${r.text} (от ${shortDate(isoOf(new Date(r.createdAt)))}, статус: ${RST[r.status][0]})`).join('\n');
 
 // ---- Что требует внимания (сводка на первой вкладке) ----
@@ -1641,18 +1640,20 @@ function attention(){
   const bills=live('bills').filter(b=>!b.paid&&b.due<=addDaysISO(today,3));
   if(bills.length) A.push({lv:bills.some(b=>b.due<today)?'bad':'warn', who:'Счета', txt:bills.map(b=>`${b.to}${b.amount?' '+money(+b.amount):''} — ${b.due<today?'просрочен':b.due===today?'сегодня':'до '+shortDate(b.due)}`).join(' · '), go:'home:bills'});
   const low=S.animals.length?lowStock():[]; if(low.length) A.push({lv:low[0].days<7?'bad':'warn', who:'Корма', txt:low.map(x=>`${x.name} — на ${fmt(x.days,0)} дн.`).join(' · '), go:'stock'});
-  const heat=S.heat?heatCalc():null; if(heat&&heat.daysLeft!==null&&heat.daysLeft<14) A.push({lv:heat.daysLeft<5?'bad':'warn', who:'Дрова', txt:`хватит на ${fmt(heat.daysLeft,0)} дн.`, go:'stock:heat'});
+  const heat=S.heat?heatCalc():null; if(heat&&heat.daysLeft!==null&&heat.daysLeft<14) A.push({lv:heat.daysLeft<5?'bad':'warn', who:'Дрова', txt:`хватит на ${fmt(heat.daysLeft,0)} дн.`, go:'home:heat'});
   const car=carAlerts().filter(a=>a.at<=Date.now()&&dayDiff(today,a.due)>=0).filter((a,i,arr)=>arr.findIndex(b=>b.car.id===a.car.id&&b.what===a.what)===i);
   if(car.length) A.push({lv:'warn', who:'Машина', txt:car.map(a=>`${a.what} — ${shortDate(a.due)}`).join(' · '), go:'home:car'});
   return A;
 }
 
 function viewHome(){
-  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки']];
-  return `<div class="seg wide" style="margin:6px 0 10px">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
-    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop}[v])();
+  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['heat','Тепло']];
+  return `<div class="subnav">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
+    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, heat:viewHeat}[v]||viewBills)();
 }
-const rationSeg=()=>`<div class="seg" style="margin:6px 0 4px"><button data-tab="ration" aria-pressed="${ui.tab==='ration'}">Рацион</button><button data-tab="tips" aria-pressed="${ui.tab==='tips'}">Советы</button></div>`;
+// Хозяйство: всё про животных в одном месте
+const FARM_TABS=['ration','tips','stock','journal','herd'];
+const farmSeg=()=>`<div class="subnav">${[['ration','Рацион'],['tips','Советы'],['stock','Запасы'],['journal','Журнал'],['herd','Животные']].map(([k,l])=>`<button data-tab="${k}" aria-pressed="${ui.tab===k}">${l}</button>`).join('')}</div>`;
 
 // ---- Общие напоминания: дела, счета, машина ----
 function allReminders(){
@@ -1719,7 +1720,7 @@ function gcalUrl(t){
   if(t.time){ const s=compact(t.due)+'T'+t.time.replace(':','')+'00'; const e=new Date(t.due+'T'+t.time+':00'); e.setHours(e.getHours()+1);
     dates=s+'/'+compact(isoOf(e))+'T'+pad2(e.getHours())+pad2(e.getMinutes())+'00'; }
   else dates=compact(t.due)+'/'+compact(addDaysISO(t.due,1));
-  const p=new URLSearchParams({action:'TEMPLATE', text:t.title, dates, details:(t.note?t.note+'\n\n':'')+'Из приложения «Рационы подворья» · '+SECS[t.sec], ctz:'Europe/Riga'});
+  const p=new URLSearchParams({action:'TEMPLATE', text:t.title, dates, details:(t.note?t.note+'\n\n':'')+'Из приложения MIGLANI · '+SECS[t.sec], ctz:'Europe/Riga'});
   if(t.rep!=='none') p.set('recur','RRULE:FREQ='+RRULE[t.rep]);
   return 'https://calendar.google.com/calendar/render?'+p.toString();
 }
@@ -1900,7 +1901,7 @@ function viewHerd(){
     <div class="card">
       <label class="f">Ваша почта<input type="email" id="set-email" data-set="email" value="${esc(S.settings.email||'')}" placeholder="name@example.com" autocomplete="email"></label>
       <div class="row">
-        ${S.settings.email?`<a class="btn primary-link" href="mailto:${encodeURIComponent(S.settings.email)}?subject=${encodeURIComponent('Отчёт подворья '+todayISO())}&body=${encodeURIComponent(reportText().slice(0,1800))}" target="_blank" rel="noopener">Открыть письмо с отчётом</a>`:'<span class="hint">Впишите почту — появится кнопка письма.</span>'}
+        ${S.settings.email?`<a class="btn primary-link" href="mailto:${encodeURIComponent(S.settings.email)}?subject=${encodeURIComponent('Отчёт MIGLANI '+todayISO())}&body=${encodeURIComponent(reportText().slice(0,1800))}" target="_blank" rel="noopener">Открыть письмо с отчётом</a>`:'<span class="hint">Впишите почту — появится кнопка письма.</span>'}
         <button data-act="report-dl">Скачать отчёт (.txt)</button>
       </div>
       <label class="row" style="font-size:14px"><input type="checkbox" id="set-daily" data-flag="dailyMail" ${S.settings.dailyMail?'checked':''}> Каждое утро письмо: дела на сегодня и просроченные</label>
@@ -1958,7 +1959,7 @@ function newAnimal(sp){
 }
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-tab],[data-act]'); if(!t) return;
-  if(t.dataset.tab){ ui.tab=t.dataset.tab; render(); window.scrollTo(0,0); return; }
+  if(t.dataset.tab){ ui.tab=t.dataset.tab==='farm'?(ui.lastFarm||'ration'):t.dataset.tab; render(); window.scrollTo(0,0); return; }
   const act=t.dataset.act, id=t.dataset.id, a=id&&S?animalById(id):null;
   if(act==='inc-planned') return; // handled on change
   if(act==='feed-close'&&t.classList.contains('sheet-bg')&&e.target.closest('[data-stop]')) return; // клик внутри листа
@@ -1975,7 +1976,7 @@ document.addEventListener('click',e=>{
   if(act==='task-del-no'){ ui.confirmTask=false; render(); return; }
   if(act==='task-del-yes'){ const x=liveTasks().find(y=>y.id===ui.task); if(x){ x.deleted=true; x.updatedAt=Date.now(); } ui.task=null; ui.confirmTask=false; save(); render(); return; }
   if(act==='task-ics'){ const x=liveTasks().find(y=>y.id===ui.task); if(x) saveFile((x.title.slice(0,40)||'дело')+'.ics', icsFile([x])); return; }
-  if(act==='ics-all'){ saveFile('Дела подворья.ics', icsFile(liveTasks().filter(x=>!x.done&&x.due))); return; }
+  if(act==='ics-all'){ saveFile('Дела MIGLANI.ics', icsFile(liveTasks().filter(x=>!x.done&&x.due))); return; }
   if(act==='qa-add'){ quickAdd(); return; }
   if(act==='sec'){ ui.sec=t.dataset.s; render(); return; }
   if(act==='day-step'){ ui.day=addDaysISO(ui.day||todayISO(), +t.dataset.n); render(); return; }
@@ -2014,7 +2015,7 @@ document.addEventListener('click',e=>{
     addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
   if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
   if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
-  if(act==='m-csv'){ saveFile(`Учёт подворья ${todayISO()}.csv`, moneyCSV()); return; }
+  if(act==='m-csv'){ saveFile(`Учёт MIGLANI ${todayISO()}.csv`, moneyCSV()); return; }
   // машина
   if(act==='car-pick'){ ui.car=t.dataset.c; render(); return; }
   if(act==='car-edit'){ ui.carEdit=t.dataset.c; render(); return; }
@@ -2091,8 +2092,8 @@ document.addEventListener('click',e=>{
   if(act==='photo-stop'){ ui.photo&&ui.photo.ctl&&ui.photo.ctl.abort(); return; }
   if(act==='growth'){ growthRun(); return; }
   if(act==='growth-stop'){ ui.growth&&ui.growth.ctl&&ui.growth.ctl.abort(); return; }
-  if(act==='report-dl'){ saveFile(`Отчёт подворья ${todayISO()}.txt`, reportText()); return; }
-  if(act==='data-dl'){ saveFile(`Данные подворья ${todayISO()}.json`, JSON.stringify(S,null,1)); return; }
+  if(act==='report-dl'){ saveFile(`Отчёт MIGLANI ${todayISO()}.txt`, reportText()); return; }
+  if(act==='data-dl'){ saveFile(`Данные MIGLANI ${todayISO()}.json`, JSON.stringify(S,null,1)); return; }
   if(act==='offline-dl'){ saveFile('Рационы подворья (офлайн).html', offlineHTML()); return; }
   if(act==='optimize'&&a){ ui.opt[id]=optimize(a); render(); return; }
   if(act==='opt-close'){ delete ui.opt[id]; render(); return; }
