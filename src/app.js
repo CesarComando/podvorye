@@ -198,6 +198,10 @@ function normalize(d){
   const out=Object.assign({}, d, {v:1, animals:arr(d.animals), feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
     customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days)});
   for(const k of SYNC_LISTS) out[k]=arr(d[k]);
+  // раздел «Ферма» объединён с «Хозяйством»
+  for(const k of ['tasks','money','bills','fuel']) for(const x of out[k]) if(x&&x.sec==='ferma') x.sec='farm';
+  // свой список магазинов, созданный раньше, дополняем сетью Beta
+  if(out.stores.length&&!out.stores.some(s=>s.name==='Beta')) out.stores.push({id:'st_beta', name:'Beta', address:'', updatedAt:1});
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
@@ -1546,7 +1550,7 @@ function carForm(c){
 }
 
 // ---- Покупки ----
-const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','Elvi','top!'];
+const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','Elvi','top!','Beta'];
 const shopLists=()=>(S&&S.settings.shopLists)||['Домой','Деду'];
 const storeList=()=>{ const own=live('stores'); return own.length?own:STORES_DEFAULT.map(n=>({id:'d_'+n,name:n,address:''})); };
 const normName=(s)=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
@@ -1660,7 +1664,7 @@ function allReminders(){
 }
 
 /* ---------- Дела (ежедневник) ---------- */
-const SECS={farm:'Хозяйство', home:'Дом', ferma:'Ферма', me:'Личное'};
+const SECS={farm:'Хозяйство', home:'Дом', me:'Личное'};
 const REPS={none:'не повторять', day:'каждый день', week:'каждую неделю', month:'каждый месяц', year:'каждый год'};
 const REMS={none:'без напоминания', at:'в момент срока', '1h':'за 1 час', '1d':'за 1 день'};
 const pad2=(n)=>String(n).padStart(2,'0');

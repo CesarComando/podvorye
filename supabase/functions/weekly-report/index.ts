@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
   // ?mode=daily — утреннее письмо: дела на сегодня и просроченные (только если включено в настройках хозяйства).
   if (new URL(req.url).searchParams.get('mode') === 'daily') {
     const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Riga' })
-    const SEC: Record<string, string> = { farm: 'Хозяйство', home: 'Дом', ferma: 'Ферма', me: 'Личное' }
+    const SEC: Record<string, string> = { farm: 'Хозяйство', home: 'Дом', ferma: 'Хозяйство', me: 'Личное' }
     const { data: all, error: e1 } = await admin.from('farms').select('id, name, data, report_email').not('report_email', 'is', null)
     if (e1) return Response.json({ error: e1.message }, { status: 500 })
     const sent: unknown[] = []
