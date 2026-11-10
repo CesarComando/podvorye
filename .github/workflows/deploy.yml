@@ -1,0 +1,31 @@
+# Сборка и выкладка на GitHub Pages при каждом push в main (можно смёржить PR с телефона — сайт обновится сам).
+name: Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx vite build
+        env:
+          # Публичные значения (они и так видны в коде сайта). Секреты репозитория, если заданы, важнее.
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://zluiwncfigibykwyxhcj.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpsdWl3bmNmaWdpYnlrd3l4aGNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQwNjg4NzAsImV4cCI6MjEwOTY0NDg3MH0.3a-ksr1WEPvDuCFr_2ye_3YML-5wE2w_9Qb7KN_dc2o' }}
+      - run: touch dist/.nojekyll
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist

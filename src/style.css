@@ -195,3 +195,16 @@ details summary{cursor:pointer;color:var(--accent);font-size:14px}
 details[open] summary{margin-bottom:10px}
 .refs td{font-size:13px}
 @media (prefers-reduced-motion:no-preference){.card,.tip{transition:border-color .2s}}
+/* голосовой ввод */
+.mic{flex:none;width:44px;height:44px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--bg);border:1px solid var(--line);color:var(--ink)}
+.mic svg{width:22px;height:22px}
+.mic.on{background:#C0392B;border-color:#C0392B;color:#fff;animation:micp 1.2s ease-in-out infinite}
+@keyframes micp{50%{box-shadow:0 0 0 8px rgba(192,57,43,.18)}}
+.row.nowrap{flex-wrap:nowrap}.row.nowrap input{flex:1;min-width:0}
+.mic-note{margin-top:6px}
+/* установка на телефон */
+.install-bar{position:fixed;left:8px;right:8px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:60}
+.install-in{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#FFF8DA;border:1px solid #E3B23C;border-radius:14px;padding:10px 12px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:15px;max-width:640px;margin:0 auto}
+.install-in span{flex:1 1 200px}
+.install-in .btn{display:inline-block;text-decoration:none;padding:10px 14px;border-radius:10px;background:#3A8A3C;color:#fff;font-weight:600}
+.install-x{flex:none}

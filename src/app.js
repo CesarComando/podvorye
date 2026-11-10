@@ -1,5 +1,7 @@
 ﻿import './style.css'
 import { registerSW } from 'virtual:pwa-register'
+import { micBtn } from './voice.js'
+import { showInstall } from './install.js'
 import { getSession, onAuth, signIn, signUp, signOut, myFarm, joinFarm, createInvite, listMembers, removeMember,
   fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
 
@@ -1244,6 +1246,7 @@ function chatSheet(){
     <div class="chat-box" id="chat-box">${msgs||`<div class="msg assistant">Привет! Я рядом, если что-то непонятно или тревожит. Спрашивай про животных, корма, хозяйство — я вижу твои рационы, запасы и журнал, так что подскажу по делу.</div><div class="row">${QUICK.map(q=>`<button class="chip-btn" data-act="chat-quick" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>`}</div>
     ${c.err?`<div class="notice">${esc(c.err)}</div>`:''}
     <div class="chat-in"><textarea id="chat-in" rows="2" placeholder="Ваш вопрос…" aria-label="Ваш вопрос">${esc(c.draft||'')}</textarea>
+      ${micBtn('chat-in','Спросить голосом')}
       ${c.busy?'<button data-act="chat-stop">Стоп</button>':'<button class="primary" data-act="chat-send">Спросить</button>'}</div>
     ${c.req?`<div class="builder"><strong>Что неудобно или чего не хватает?</strong><textarea id="req-text" class="note" rows="3" placeholder="Например: хочу видеть дела деда отдельно…">${esc(c.reqDraft||'')}</textarea>
       <div class="row"><button class="primary" data-act="req-send">Отправить пожелание</button><button data-act="req-close">Отмена</button></div>
@@ -1819,7 +1822,7 @@ function taskSheet(){
   const opt=(o,v)=>Object.entries(o).map(([k,l])=>`<option value="${k}" ${v===k?'selected':''}>${l}</option>`).join('');
   return `<div class="sheet-bg" data-act="task-close"><div class="sheet" role="dialog" aria-modal="true" aria-label="Дело" data-stop="1">
     <div class="card-head"><h2>${isNew?'Новое дело':'Дело'}</h2><button class="ghost" data-act="task-close">✕</button></div>
-    <label class="f">Что сделать<input id="tk-title" value="${esc(t.title)}" placeholder="Например: позвонить ветеринару"></label>
+    <label class="f">Что сделать<span class="row nowrap"><input id="tk-title" value="${esc(t.title)}" placeholder="Например: позвонить ветеринару">${micBtn('tk-title','Сказать дело голосом')}</span></label>
     <div class="form-grid">
       <label class="f">Раздел<select id="tk-sec">${opt(SECS,t.sec)}</select></label>
       <label class="f">Дата<input type="date" id="tk-due" value="${esc(t.due||'')}"></label>
@@ -1918,6 +1921,7 @@ function viewHerd(){
         <div class="row" style="margin-top:8px"><button class="danger" data-act="import-yes">Заменить</button><button data-act="import-no">Отмена</button></div></div>`:''}
       <p class="hint" style="margin:0">Переезд из первой версии (на claude.ai): там во вкладке «Хозяйство» нажмите «Скачать данные (.json)», а здесь — «Загрузить данные из файла».</p>
     </div></section>
+  <section class="section"><div class="card"><div class="row"><button data-act="install-app">📲 Установить на телефон</button><span class="hint">открывается как приложение, работает без интернета</span></div></div></section>
   <section class="section"><details><summary>Где хранятся данные</summary><div class="card"><p style="margin:0">Данные хозяйства хранятся в телефоне и в защищённой базе Supabase (сервер в ЕС, Стокгольм). Их видят только участники хозяйства — те, кого владелец пригласил кодом. Фото и вопросы помощнику уходят в Claude только когда вы нажимаете кнопку; перед отправкой фото уменьшается и из него удаляются данные о месте съёмки, сами фото нигде не сохраняются. Ключ Claude хранится только на сервере.</p></div></details></section>`:viewTeam()}`;
   return `
   <section class="section"><div class="section-head"><h2>Животные</h2><span class="hint">вес, состояние и корма</span></div>${list}
@@ -2081,6 +2085,7 @@ document.addEventListener('click',e=>{
   if(act==='photo-close'&&t.classList.contains('sheet-bg')&&e.target.closest('[data-stop]')) return;
   if(act==='chat-open'){ ui.chat=ui.chat||{turns:[]}; ui.chat.open=true; render(); scrollChat(); setTimeout(()=>{const el=document.getElementById('chat-in'); if(el) el.focus();},50); return; }
   if(act==='chat-close'){ if(ui.chat){ const el=document.getElementById('chat-in'); if(el) ui.chat.draft=el.value; ui.chat.open=false; } render(); return; }
+  if(act==='install-app'){ showInstall(); return; }
   if(act==='chat-send'){ chatSend(); return; }
   if(act==='chat-stop'){ ui.chat&&ui.chat.ctl&&ui.chat.ctl.abort(); return; }
   if(act==='chat-clear'){ if(ui.chat&&!ui.chat.busy){ ui.chat.turns=[]; ui.chat.err=''; } render(); return; }
