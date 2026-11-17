@@ -1530,7 +1530,16 @@ function billPaid(id, amt){
 
 // ---- Учёт ----
 const CATS_OUT=['Корм','Ветеринар','Дрова','Коммуналка','Топливо','Ремонт','Продукты','Связь','Кредит','Налоги','Одежда','Прочее'];
-const CATS_IN=['Продажа молока','Продажа яиц','Продажа молодняка','Зарплата','Подарок','Прочее'];
+const CATS_IN=['Яйца','Молоко','Помидоры','Огурцы','Лук','Петухи','Продажа молодняка','Зарплата','Подарок','Прочее'];
+// при выборе категории раздел подставляется сам (его можно поменять)
+const CAT_SEC={'Яйца':'hens','Петухи':'hens','Продажа яиц':'hens','Молоко':'farm','Продажа молока':'farm','Помидоры':'farm','Огурцы':'farm','Лук':'farm','Продажа молодняка':'farm','Корм':'farm','Ветеринар':'farm','Дрова':'home','Коммуналка':'home','Продукты':'home','Связь':'home','Топливо':'car','Ремонт':'home','Зарплата':'me','Подарок':'me','Одежда':'me','Кредит':'me','Налоги':'me'};
+// Выбор категории списком (на телефоне подсказки у поля ввода показывают только совпадения) + «своя категория»
+function catPicker(px, type, cur){
+  const list=catsFor(type), has=!cur||list.includes(cur);
+  return `<label class="f">Категория<select id="${px}-catsel" data-catpick="${px}">${list.map(c=>`<option value="${esc(c)}" ${c===(cur||'')?'selected':''}>${esc(c)}</option>`).join('')}${!has?`<option value="${esc(cur)}" selected>${esc(cur)}</option>`:''}<option value="__new">＋ своя категория…</option>${!cur?'<option value="" selected disabled hidden>— выберите —</option>':''}</select>
+    <input id="${px}-cat" value="${esc(cur||'')}" placeholder="название категории" style="margin-top:6px" hidden></label>`;
+}
+const catValue=(px)=>{ const sel=document.getElementById(px+'-catsel'), inp=document.getElementById(px+'-cat'); return ((sel&&sel.value==='__new'?inp&&inp.value:sel&&sel.value)||'').trim(); };
 // Разделы учёта денег — отдельно от разделов дел: куры, остальное хозяйство, машина, дом (в т.ч. дрова), личное.
 const MSECS={hens:'Куры', farm:'Хозяйство', car:'Машина', home:'Дом', me:'Личное'};
 // Старые записи: топливо → «Машина», продажа яиц и всё про кур → «Куры».
@@ -1558,10 +1567,10 @@ function viewMoney(){
     <div class="seg"><button data-act="m-type" data-t="out" aria-pressed="${mt==='out'}">Расход</button><button data-act="m-type" data-t="in" aria-pressed="${mt==='in'}">Доход</button></div>
     <div class="form-grid">
       <label class="f">Сумма, €<input id="mn-amt" inputmode="decimal" placeholder="0"></label>
-      <label class="f">Категория<input id="mn-cat" list="mn-cats" placeholder="${mt==='in'?'Продажа яиц':'Корм'}"></label>
+      ${catPicker('mn', mt, '')}
       <label class="f">Раздел<select id="mn-sec">${Object.entries(MSECS).map(([k,l])=>`<option value="${k}" ${k===(ui.mSec||'home')?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f">Дата<input type="date" id="mn-date" value="${ym===todayISO().slice(0,7)?todayISO():ym+'-01'}"></label>
-    </div><datalist id="mn-cats">${catsFor(mt).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    </div>
     <label class="f">Заметка<input id="mn-note" placeholder="необязательно"></label>
     <div class="row"><button class="primary" data-act="m-add">Записать</button></div></div></section>
   ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
@@ -1577,10 +1586,10 @@ function moneyEditRow(m){
     <div class="seg"><button data-act="m-edit-type" data-t="out" aria-pressed="${t==='out'}">Расход</button><button data-act="m-edit-type" data-t="in" aria-pressed="${t==='in'}">Доход</button></div>
     <div class="form-grid">
       <label class="f">Сумма, €<input id="me-amt" inputmode="decimal" value="${fmt(+m.amount||0,2)}"></label>
-      <label class="f">Категория<input id="me-cat" list="me-cats" value="${esc(m.cat||'')}"></label>
+      ${catPicker('me', t, m.cat||'')}
       <label class="f">Раздел<select id="me-sec">${Object.entries(MSECS).map(([k,l])=>`<option value="${k}" ${k===moneySec(m)?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f">Дата<input type="date" id="me-date" value="${esc(m.date||todayISO())}"></label>
-    </div><datalist id="me-cats">${catsFor(t).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    </div>
     <label class="f">Заметка<input id="me-note" value="${esc(m.note||'')}" placeholder="необязательно"></label>
     <div class="row"><button class="primary" data-act="m-save" data-m="${m.id}">Сохранить</button><button data-act="m-edit-cancel">Отмена</button><button class="ghost" data-act="m-del" data-m="${m.id}" style="color:var(--bad)">Удалить</button></div>
   </div></td></tr>`;
@@ -2219,13 +2228,13 @@ document.addEventListener('click',e=>{
   if(act==='m-type'){ ui.mType=t.dataset.t; render(); return; }
   if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
     ui.mSec=g('sec').value;
-    addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
+    addMoney({type:ui.mType||'out', amount:amt, cat:catValue('mn')||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
   if(act==='m-edit'){ ui.mEdit=t.dataset.m; ui.mEditType=null; ui.confirmMoney=null; render(); return; }
-  if(act==='m-edit-type'){ ui.mEditType=t.dataset.t; const keep={}; for(const k of ['amt','cat','sec','date','note']){ const el=document.getElementById('me-'+k); if(el) keep[k]=el.value; } render(); for(const k in keep){ const el=document.getElementById('me-'+k); if(el) el.value=keep[k]; } return; }
+  if(act==='m-edit-type'){ ui.mEditType=t.dataset.t; const keep={}; for(const k of ['amt','sec','date','note']){ const el=document.getElementById('me-'+k); if(el) keep[k]=el.value; } render(); for(const k in keep){ const el=document.getElementById('me-'+k); if(el) el.value=keep[k]; } return; }
   if(act==='m-edit-cancel'){ ui.mEdit=null; ui.mEditType=null; render(); return; }
   if(act==='m-save'){ const m=live('money').find(x=>x.id===t.dataset.m); if(!m) return; const g=(k)=>document.getElementById('me-'+k), amt=r2(num(g('amt').value));
     if(!(amt>0)){ g('amt').focus(); flash('Впишите сумму больше нуля.'); return; }
-    Object.assign(m,{type:ui.mEditType||m.type, amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||m.date, note:g('note').value.trim()}); touch(m);
+    Object.assign(m,{type:ui.mEditType||m.type, amount:amt, cat:catValue('me')||'Прочее', sec:g('sec').value, date:g('date').value||m.date, note:g('note').value.trim()}); touch(m);
     ui.mEdit=null; ui.mEditType=null; save(); flash('Запись исправлена.'); return; }
   if(act==='m-del'){ ui.confirmMoney=t.dataset.m; ui.mEdit=null; render(); return; }
   if(act==='m-filter'){ const k=t.dataset.s||null; const fromTable=t.tagName==='TR'; ui.mFilter=(fromTable&&ui.mFilter===k)?null:k; render(); if(fromTable){ const el=document.getElementById('m-records'); if(el) el.scrollIntoView({block:'start',behavior:'smooth'}); } return; }
@@ -2428,6 +2437,9 @@ document.addEventListener('change',e=>{
     else h[k]=['wood','moist','stove','house'].includes(k)?t.value:(t.value.trim()===''?'':Math.max(0,num(t.value)));
     save(); render(); return;
   }
+  if(t.dataset.catpick){ const px=t.dataset.catpick, inp=document.getElementById(px+'-cat'), sec=document.getElementById(px+'-sec');
+    if(inp){ inp.hidden=t.value!=='__new'; if(t.value==='__new'){ inp.value=''; inp.focus(); } }
+    if(sec&&CAT_SEC[t.value]) sec.value=CAT_SEC[t.value]; return; }
   if(t.dataset.jset){ ui[t.dataset.jset]=t.value; render(); return; }
   if(t.dataset.photo&&ui.photo){ const p=ui.photo; p.urls.forEach(u=>URL.revokeObjectURL(u));
     p.files=[...(t.files||[])].slice(0,p.mode==='receipt'?RC_MAX:(p.mode==='store'||p.mode==='prices')?IMG_MAX:1); p.urls=p.mode==='receipt'?[]:p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.receipts=null; p.text=''; p.err=''; render(); return; }
