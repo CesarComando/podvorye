@@ -1082,6 +1082,9 @@ ${animalList()}`;
 Не выдумывай: если поле не видно — null. Номера карт и личные коды не переписывай.`;
   if(mode==='fuel') return `На фото чек с заправки или табло колонки. Достань данные заправки.
 Ответь только JSON: {"liters": число или null, "sum": число евро или null, "price": цена за литр или null, "station": "сеть заправки (Circle K, Neste, Viada, Virši…)" или null, "date": "YYYY-MM-DD" или null}. Не выдумывай — чего не видно, то null.`;
+  if(mode==='prices') return `На фото — ценники или полка в магазине в Латвии (магазин: ${ui.photo&&ui.photo.store||'не указан'}). Перепиши товары и цены.
+Ответь только JSON: {"items": [{"name": "короткое название по-русски, как пишут в списке покупок: молоко, хлеб, сыр, яйца 10 шт", "full": "название как на ценнике", "price": цена в евро за штуку или упаковку, "unit_price": "цена за кг или литр, если видна, например 2,49 €/кг" или null, "discount": true если это цена со скидкой}], "note": "одно предложение по-русски, если что-то неясно" или null}.
+Если на ценнике две цены (обычная и со скидкой или по карте) — бери ту, что платят сейчас, и ставь discount true. Не выдумывай: что не читается — пропусти.`;
   if(mode==='milk') return `На фото кувшин, банка, ведро или мерная ёмкость с молоком на ферме. Оцени объём молока по делениям или меткам на ёмкости (или по объёму тары, если он виден). Ответь только JSON: {"value": число литров или null, "confidence": "high" | "medium" | "low", "note": "одно короткое предложение по-русски, как оценено"}. Если делений нет — оцени примерно и поставь confidence "low".`;
   return `Ты — опытный зоотехник и специалист по хранению кормов и организации небольшой фермы. На фото — место хранения кормов (склад, сарай, кладовая, курятник или хлев).
 Дай практичные советы по-русски, по тому, что действительно видно на фото:
@@ -1109,6 +1112,9 @@ async function photoRun(){
         p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='bills'; render(); return; }
       if(p.mode==='fuel'){ const x=p.res; ui.fuelDraft={liters:n2(x.liters), sum:n2(x.sum), price:n2(x.price), station:s(x.station), date:/^\d{4}-\d\d-\d\d$/.test(s(x.date))?x.date:todayISO()};
         p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='car'; render(); flash('Проверьте цифры с чека, впишите пробег и нажмите «Записать заправку».'); return; }
+      if(p.mode==='prices'){ const arr=Array.isArray(p.res.items)?p.res.items:[];
+        p.items=arr.map(x=>({name:s(x.name).trim()||s(x.full).trim(), full:s(x.full).trim(), price:n2(x.price), unit:s(x.unit_price), discount:!!x.discount, on:true})).filter(x=>x.name&&x.price);
+        p.busy=false; render(); return; }
       if(p.mode==='weigh'){ const v=+p.res.value; p.kg=isFinite(v)&&v>0?(p.res.unit==='g'?v/1000:v):0;
         p.feed=F[p.res.feed]?p.res.feed:''; p.an=animalById(p.res.animal)?p.res.animal:''; }
       else { const v=+p.res.value; p.l=isFinite(v)&&v>0?v:0; }
@@ -1118,9 +1124,10 @@ async function photoRun(){
 }
 function photoSheet(){
   const p=ui.photo, an=S.animals.filter(a=>!a.planned);
-  const modes=[['weigh','Весы'],['milk','Кувшин'],['bill','Счёт'],['fuel','Чек заправки'],['store','Склад']];
+  const modes=[['weigh','Весы'],['milk','Кувшин'],['bill','Счёт'],['fuel','Чек заправки'],['prices','Ценники'],['store','Склад']];
   const hint={bill:'Сфотографируйте счёт — Claude достанет получателя, сумму, срок и IBAN. Вы проверите и сохраните.',
     fuel:'Сфотографируйте чек или табло колонки — Claude достанет литры, сумму и цену.',
+    prices:`Выберите магазин и сфотографируйте ценники (до ${IMG_MAX} фото) — Claude перепишет товары и цены, вы проверите и сохраните.`,
     weigh:'Сфотографируйте экран весов с кормом — Claude прочитает вес и предложит записать его в рацион.',
     milk:'Сфотографируйте кувшин или банку с делениями — Claude оценит, сколько литров надоили, и запишет в журнал.',
     store:`Сфотографируйте склад или сарай с кормами (до ${IMG_MAX} фото) — Claude подскажет, как удобнее и безопаснее хранить и раскладывать корма.`}[p.mode];
@@ -1142,6 +1149,15 @@ function photoSheet(){
       <div class="row"><button class="primary" data-act="photo-apply" ${p.kg&&p.an&&p.feed?'':'disabled'}>Записать в рацион</button></div>
     </div>`;
   }
+  if(p.res&&p.mode==='prices'){
+    const it=p.items||[];
+    res+=`<div class="builder"><strong>${it.length?`Найдено цен: ${it.length} — проверьте`:'Цены не прочитались — попробуйте снять ближе и ровнее'}</strong>
+      ${p.res.note?`<p class="hint" style="margin:0">${esc(p.res.note)}</p>`:''}
+      ${it.map((x,i)=>`<div class="row nowrap price-row"><input type="checkbox" id="pi-on-${i}" ${x.on?'checked':''} aria-label="Сохранить: ${esc(x.name)}">
+        <input id="pi-name-${i}" value="${esc(x.name)}" aria-label="Товар" style="flex:1;min-width:0"><input id="pi-price-${i}" class="num" inputmode="decimal" value="${fmt(x.price,2)}" aria-label="Цена, €" style="flex:0 0 88px;width:88px;min-width:0;text-align:right"></div>
+        ${x.full||x.unit?`<p class="hint" style="margin:-4px 0 4px 30px">${esc(x.full)}${x.unit?' · '+esc(x.unit):''}${x.discount?' · скидка':''}</p>`:''}`).join('')}
+      ${it.length?`<div class="row"><button class="primary" data-act="photo-prices">Сохранить цены в ${esc(p.store||'магазин')}</button></div>`:''}</div>`;
+  }
   if(p.res&&p.mode==='milk'){
     const milkers=an.filter(x=>x.sp==='goat'||x.sp==='cow'); if(!p.an&&milkers.length) p.an=milkers[0].id;
     res+=`<div class="builder">
@@ -1158,7 +1174,8 @@ function photoSheet(){
     <div class="card-head"><h2><svg class="wheat" aria-hidden="true"><use href="#ear"/></svg>Фото вместо записи от руки</h2><button class="ghost" data-act="photo-close">✕ Закрыть</button></div>
     <div class="seg">${modes.map(([k,l])=>`<button data-act="photo-mode" data-m="${k}" aria-pressed="${p.mode===k}">${l}</button>`).join('')}</div>
     <p class="hint" style="margin:0">${hint}</p>
-    <label class="btn primary-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${p.files.length?'Переснять':'Сфотографировать'}<input type="file" id="ph-file" accept="image/*" capture="environment" ${p.mode==='store'&&IMG_MAX>1?'multiple':''} data-photo="1" style="display:none"></label>
+    ${p.mode==='prices'?`<label class="f">Магазин<select id="ph-store" data-ph="store">${storeList().map(x=>`<option value="${esc(x.name)}" ${x.name===p.store?'selected':''}>${esc(x.name)}${x.address?' — '+esc(x.address):''}</option>`).join('')}</select></label>`:''}
+    <label class="btn primary-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${p.files.length?'Переснять':'Сфотографировать'}<input type="file" id="ph-file" accept="image/*" capture="environment" ${(p.mode==='store'||p.mode==='prices')&&IMG_MAX>1?'multiple':''} data-photo="1" style="display:none"></label>
     ${p.urls.length?`<div class="row">${p.urls.map(u=>`<img src="${u}" alt="Фото" style="width:88px;height:88px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">`).join('')}</div>`:''}
     ${p.files.length&&!p.busy?`<button class="primary" data-act="photo-run">${p.mode==='store'?'Получить советы':'Распознать'}</button>`:''}
     ${res}
@@ -1475,15 +1492,16 @@ function viewMoney(){
   const inc=list.filter(m=>m.type==='in').reduce((s,m)=>s+(+m.amount||0),0), out=list.filter(m=>m.type==='out').reduce((s,m)=>s+(+m.amount||0),0);
   const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ const k=moneySec(m); bySec[k]=(bySec[k]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
   const per={}; for(const m of list){ const k=moneySec(m); per[k]=per[k]||{inc:0,out:0}; per[k][m.type==='in'?'inc':'out']+=(+m.amount||0); }
-  const perRows=Object.keys(MSECS).filter(k=>per[k]).map(k=>{ const v=per[k], d=v.inc-v.out; return `<tr><td><strong>${MSECS[k]}</strong></td><td class="n" style="color:var(--ok)">${v.inc?'+'+money(v.inc):'—'}</td><td class="n">${v.out?'−'+money(v.out):'—'}</td><td class="n" style="font-weight:700;color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td></tr>`; }).join('');
+  const perRows=Object.keys(MSECS).filter(k=>per[k]).map(k=>{ const v=per[k], d=v.inc-v.out; return `<tr class="msec-row${ui.mFilter===k?' on':''}" data-act="m-filter" data-s="${k}" style="cursor:pointer"><td><strong>${MSECS[k]}</strong> <span class="fm-arrow">›</span></td><td class="n" style="color:var(--ok)">${v.inc?'+'+money(v.inc):'—'}</td><td class="n">${v.out?'−'+money(v.out):'—'}</td><td class="n" style="font-weight:700;color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td></tr>`; }).join('');
   const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(MSECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
   const mt=ui.mType||'out';
+  const secs=Object.keys(MSECS).filter(k=>per[k]), fl=ui.mFilter&&per[ui.mFilter]?ui.mFilter:null, shown=fl?list.filter(m=>moneySec(m)===fl):list;
   return `<section class="section"><div class="day-nav"><button class="ghost big-btn" data-act="ym" data-n="-1" aria-label="Прошлый месяц">‹</button><span class="day-title" style="text-transform:none">${monthName(ym)}</span><button class="ghost big-btn" data-act="ym" data-n="1" aria-label="Следующий месяц">›</button></div>
     <div class="summary"><div class="stat"><span class="k">Доходы</span><span class="v" style="color:var(--ok)">${money(inc)}</span></div>
       <div class="stat"><span class="k">Расходы</span><span class="v">${money(out)}</span></div>
       <div class="stat"><span class="k">Разница</span><span class="v" style="color:${inc-out>=0?'var(--ok)':'var(--bad)'}">${inc-out>=0?'+':''}${money(inc-out)}</span></div></div></section>
   ${perRows?`<section class="section"><div class="section-head"><h2>Итог по разделам</h2><span class="hint">каждый раздел отдельно</span></div><div class="card"><div class="tbl-wrap"><table class="msec"><thead><tr><th></th><th class="n">Доход</th><th class="n">Расход</th><th class="n">Итог</th></tr></thead><tbody>${perRows}</tbody></table></div>
-    <p class="hint" style="margin:6px 0 0">Заправки идут в «Машину», дрова — в «Дом». Чтобы корм для кур считался в «Куры», при записи выберите раздел «Куры».</p></div></section>`:''}
+    <p class="hint" style="margin:6px 0 0">Нажмите на раздел — внизу будут только его записи по дням и итог. Заправки идут в «Машину», дрова — в «Дом». Чтобы корм для кур считался в «Куры», при записи выберите раздел «Куры».</p></div></section>`:''}
   <section class="section"><div class="section-head"><h2>Записать</h2></div><div class="card">
     <div class="seg"><button data-act="m-type" data-t="out" aria-pressed="${mt==='out'}">Расход</button><button data-act="m-type" data-t="in" aria-pressed="${mt==='in'}">Доход</button></div>
     <div class="form-grid">
@@ -1495,8 +1513,9 @@ function viewMoney(){
     <label class="f">Заметка<input id="mn-note" placeholder="необязательно"></label>
     <div class="row"><button class="primary" data-act="m-add">Записать</button></div></div></section>
   ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
-  <section class="section"><div class="section-head"><h2>Записи за месяц</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
-    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
+  <section class="section" id="m-records"><div class="section-head"><h2>Записи за месяц${fl?': '+MSECS[fl]:''}</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
+    ${secs.length>1?`<div class="chips"><button class="chip-btn ${fl?'':'on'}" data-act="m-filter" data-s="">Все</button>${secs.map(k=>`<button class="chip-btn ${fl===k?'on':''}" data-act="m-filter" data-s="${k}">${MSECS[k]}</button>`).join('')}</div>`:''}
+    ${shown.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${shown.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}${fl?(()=>{ const v=per[fl]||{inc:0,out:0}, d=v.inc-v.out; return `<tr class="fm-grand"><td colspan="2">Итого «${MSECS[fl]}»${v.inc&&v.out?`<span class="small">доход +${money(v.inc)} · расход −${money(v.out)}</span>`:''}</td><td class="n" style="color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td><td></td></tr>`; })():''}</tbody></table></div></div>`:(fl?'<p class="hint">В этом разделе за месяц записей нет.</p>':'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>')}</section>`;
 }
 function moneyCSV(){
   const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
@@ -1650,10 +1669,36 @@ function viewShop(){
     <a class="btn" href="${esc(routeUrl(plan.worth?Object.keys(plan.split):[plan.single.s]))}" target="_blank" rel="noopener">Открыть маршрут в Google Картах</a></div></section>`:''}
   <section class="section"><details ${ui.open.shopset?'open':''} data-det="shopset"><summary>Магазины и адрес дома</summary><div class="card">
     <label class="f">Адрес дома (откуда ехать)<input id="sh-home" data-set="homeAddr" value="${esc(home)}" placeholder="улица, посёлок"></label>
-    ${storeList().map(s=>`<div class="row"><span style="min-width:70px">${esc(s.name)}</span><input data-storeaddr="${esc(s.name)}" value="${esc(s.address||'')}" placeholder="адрес филиала" style="flex:1"></div>`).join('')}
-    <div class="row"><input id="sh-newstore" placeholder="ещё магазин"><button data-act="store-add">Добавить</button></div>
+    <div class="row"><button data-act="home-view" data-v="stores">Магазины, адреса и цены →</button></div>
     <label class="f">Делить покупки по магазинам, если экономия больше, €<input id="sh-min" inputmode="decimal" data-set="splitMin" value="${esc(S.settings.splitMin||3)}"></label>
   </div></details></section>`;
+}
+// ---- Магазины: название, адрес, цены (вручную или по фото ценников) ----
+const ownStores=()=>{ if(!live('stores').length){ if(!S) S=blank(); S.stores=(S.stores||[]).concat(STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}))); } return live('stores'); };
+function storePrices(name){
+  const by={}; for(const p of live('shopPrices').filter(x=>x.store===name)){ const k=p.name; if(!by[k]||p.date>by[k].date||(p.date===by[k].date&&(p.updatedAt||0)>(by[k].updatedAt||0))) by[k]=p; }
+  return Object.values(by).sort((a,b)=>a.name.localeCompare(b.name,'ru'));
+}
+function viewStores(){
+  const list=storeList(), canPhoto=SAMPLE_IMG&&(!farm||aiEnabled);
+  const cards=list.map(st=>{ const pr=storePrices(st.name), open=ui.storeOpen===st.name;
+    return `<div class="card store-card">
+      <div class="section-head"><h2>${esc(st.name)}</h2><span class="hint">${pr.length?'цен: '+pr.length:'цен пока нет'}</span></div>
+      <label class="f">Адрес<input data-storeaddr="${esc(st.name)}" value="${esc(st.address||'')}" placeholder="улица, город — для маршрута" autocomplete="off"></label>
+      <div class="row">
+        ${canPhoto?`<button class="primary" data-act="photo-open" data-m="prices" data-store="${esc(st.name)}">📷 Фото цен</button>`:''}
+        ${pr.length?`<button data-act="store-open" data-s="${esc(st.name)}" aria-expanded="${open}">${open?'Скрыть цены':'Цены'}</button>`:''}
+        ${ui.confirmStore===st.name?`<button class="danger" data-act="store-del-yes" data-s="${esc(st.name)}">Удалить магазин</button><button data-act="store-del-no">Отмена</button>`:`<button class="ghost" data-act="store-del" data-s="${esc(st.name)}" aria-label="Удалить магазин ${esc(st.name)}">✕</button>`}
+      </div>
+      ${open&&pr.length?`<div class="tbl-wrap"><table><tbody>${pr.map(p=>`<tr><td>${esc(p.name)}${p.full&&normName(p.full)!==p.name?`<span class="small">${esc(p.full)}</span>`:''}</td><td class="n">${money(p.price)}${p.discount?' <span class="pill warn">скидка</span>':''}</td><td class="n"><span class="hint">${shortDate(p.date)}</span></td></tr>`).join('')}</tbody></table></div>`:''}
+    </div>`; }).join('');
+  return `<section class="section"><div class="section-head"><h2>Магазины</h2><span class="hint">адрес и цены</span></div>
+    ${canPhoto?'<p class="hint" style="margin:0 0 8px">Нажмите «📷 Фото цен» у нужного магазина и сфотографируйте ценники — цены запишутся в этот магазин. Фото не сохраняется.</p>':''}
+    <div class="stores">${cards}</div></section>
+  <section class="section"><div class="section-head"><h2>Добавить магазин</h2></div><div class="card">
+    <div class="form-grid"><label class="f">Название<input id="st-new-name" placeholder="например, Rimi Jaunbūve"></label>
+      <label class="f">Адрес<input id="st-new-addr" placeholder="улица, город"></label></div>
+    <div class="row"><button class="primary" data-act="store-new">Добавить</button></div></div></section>`;
 }
 function addShopItems(text, list){
   if(!S) S=blank();
@@ -1692,9 +1737,9 @@ function attention(){
 }
 
 function viewHome(){
-  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['heat','Тепло']];
+  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['stores','Магазины'],['heat','Тепло']];
   return `<div class="subnav">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
-    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, heat:viewHeat}[v]||viewBills)();
+    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, stores:viewStores, heat:viewHeat}[v]||viewBills)();
 }
 // Хозяйство: всё про животных в одном месте
 const FARM_TABS=['ration','tips','stock','journal','herd'];
@@ -2061,6 +2106,7 @@ document.addEventListener('click',e=>{
     ui.mSec=g('sec').value;
     addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
   if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
+  if(act==='m-filter'){ const k=t.dataset.s||null; const fromTable=t.tagName==='TR'; ui.mFilter=(fromTable&&ui.mFilter===k)?null:k; render(); if(fromTable){ const el=document.getElementById('m-records'); if(el) el.scrollIntoView({block:'start',behavior:'smooth'}); } return; }
   if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
   if(act==='m-csv'){ saveFile(`Учёт MIGLANI ${todayISO()}.csv`, moneyCSV()); return; }
   // машина
@@ -2099,6 +2145,20 @@ document.addEventListener('click',e=>{
     const total=r2(bought.reduce((s,i)=>s+(+i.price||0)*(+i.qty||1),0));
     if(total>0) addMoney({type:'out', amount:total, sec:ui.shopList==='Деду'?'me':'home', cat:'Продукты', note:`${ui.shopStore}: ${bought.length} товаров (${ui.shopList})`});
     const st=ui.shopStore; ui.shopStore=null; save(); flash(total>0?`Покупка в ${st} — ${money(total)} записана в «Учёт».`:`Покупки отмечены. Цен не было — в «Учёт» ничего не записано.`); return; }
+  if(act==='photo-prices'){ const p=ui.photo; if(!p||!p.items) return; const st=p.store; let n=0;
+    p.items.forEach((x,i)=>{ const on=document.getElementById('pi-on-'+i), nm=document.getElementById('pi-name-'+i), pr=document.getElementById('pi-price-'+i);
+      const name=normName(nm?nm.value:x.name), price=num(pr?pr.value:x.price);
+      if(on&&on.checked&&name&&price>0&&st){ S.shopPrices.push(touch({id:uid(), name, store:st, price, date:todayISO(), full:x.full||'', discount:!!x.discount})); n++; } });
+    p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.lastPriceStore=st; ui.tab='home'; ui.homeView='stores'; ui.storeOpen=st; save(); render();
+    flash(n?`Записано цен: ${n} — в ${st}.`:'Ничего не записано — не отмечено ни одной цены.'); return; }
+  if(act==='store-open'){ ui.storeOpen=ui.storeOpen===t.dataset.s?null:t.dataset.s; render(); return; }
+  if(act==='store-del'){ ui.confirmStore=t.dataset.s; render(); return; }
+  if(act==='store-del-no'){ ui.confirmStore=null; render(); return; }
+  if(act==='store-del-yes'){ const x=ownStores().find(z=>z.name===t.dataset.s); if(x){ x.deleted=true; touch(x); } ui.confirmStore=null; save(); render(); return; }
+  if(act==='store-new'){ const nEl=document.getElementById('st-new-name'), aEl=document.getElementById('st-new-addr'), n=nEl&&nEl.value.trim(), a=aEl?aEl.value.trim():'';
+    if(!n){ if(nEl) nEl.focus(); return; }
+    const ex=ownStores().find(z=>normName(z.name)===normName(n)); if(ex){ if(a){ ex.address=a; touch(ex); } } else S.stores.push(touch({id:uid(),name:n,address:a}));
+    save(); render(); flash(ex?`${ex.name} уже есть${a?' — адрес обновлён':''}.`:`Магазин ${n} добавлен.`); return; }
   if(act==='store-add'){ const el=document.getElementById('sh-newstore'), n=el&&el.value.trim(); if(!n) return; if(!live('stores').length) S.stores=STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}));
     S.stores.push(touch({id:uid(),name:n,address:''})); ui.open.shopset=true; save(); render(); return; }
   if(act==='heat-dims'){ const g=(k)=>num(document.getElementById('ht-'+k).value); ui.dimW=g('w'); ui.dimD=g('d'); ui.dimH=g('h');
@@ -2145,9 +2205,9 @@ document.addEventListener('click',e=>{
   if(act==='chat-stop'){ ui.chat&&ui.chat.ctl&&ui.chat.ctl.abort(); return; }
   if(act==='chat-clear'){ if(ui.chat&&!ui.chat.busy){ ui.chat.turns=[]; ui.chat.err=''; } render(); return; }
   if(act==='chat-quick'){ const el=document.getElementById('chat-in'); if(el){ el.value=t.dataset.q; chatSend(); } return; }
-  if(act==='photo-open'){ ui.photo={mode:t.dataset.m||'weigh',files:[],urls:[]}; render(); return; }
+  if(act==='photo-open'){ const m=t.dataset.m||'weigh'; ui.photo={mode:m,files:[],urls:[]}; if(m==='prices'||t.dataset.store) ui.photo.store=t.dataset.store||ui.lastPriceStore||(storeList()[0]||{}).name||''; render(); return; }
   if(act==='photo-close'){ if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo.urls.forEach(u=>URL.revokeObjectURL(u)); } ui.photo=null; render(); return; }
-  if(act==='photo-mode'){ const p=ui.photo; if(p&&!p.busy){ p.mode=t.dataset.m; p.res=null; p.text=''; p.err=''; if(p.mode!=='store'&&p.files.length>1){ p.files=p.files.slice(0,1); p.urls.slice(1).forEach(u=>URL.revokeObjectURL(u)); p.urls=p.urls.slice(0,1); } } render(); return; }
+  if(act==='photo-mode'){ const p=ui.photo; if(p&&!p.busy){ p.mode=t.dataset.m; if(p.mode==='prices'&&!p.store) p.store=ui.lastPriceStore||(storeList()[0]||{}).name||''; p.res=null; p.text=''; p.err=''; if(p.mode!=='store'&&p.mode!=='prices'&&p.files.length>1){ p.files=p.files.slice(0,1); p.urls.slice(1).forEach(u=>URL.revokeObjectURL(u)); p.urls=p.urls.slice(0,1); } } render(); return; }
   if(act==='photo-run'){ photoRun(); return; }
   if(act==='photo-stop'){ ui.photo&&ui.photo.ctl&&ui.photo.ctl.abort(); return; }
   if(act==='growth'){ growthRun(); return; }
@@ -2225,7 +2285,7 @@ document.addEventListener('change',e=>{
     if(v>0&&i.sessionStore) S.shopPrices.push(touch({id:uid(), name:normName(i.name), store:i.sessionStore, price:v, date:todayISO()}));   // цена на полке — за штуку/единицу
     save(); render(); return; }
   if(t.dataset.storeaddr){ if(!live('stores').length) S.stores=STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}));
-    const s=live('stores').find(x=>x.name===t.dataset.storeaddr); if(s){ s.address=t.value.trim(); touch(s); } ui.open.shopset=true; save(); return; }
+    const s=live('stores').find(x=>x.name===t.dataset.storeaddr); if(s){ s.address=t.value.trim(); touch(s); } save(); return; }
   if(t.dataset.heat){
     S.heat=Object.assign(heatDefaults(), S.heat||{}); const k=t.dataset.heat, h=S.heat;
     if(k==='stockBags'){ if(t.value.trim()===''){ h.stockL=null; h.stockDate=null; } else { h.stockL=Math.max(0,num(t.value))*(+h.bagL||40); h.stockDate=todayISO(); } }
@@ -2234,7 +2294,7 @@ document.addEventListener('change',e=>{
   }
   if(t.dataset.jset){ ui[t.dataset.jset]=t.value; render(); return; }
   if(t.dataset.photo&&ui.photo){ const p=ui.photo; p.urls.forEach(u=>URL.revokeObjectURL(u));
-    p.files=[...(t.files||[])].slice(0,p.mode==='store'?IMG_MAX:1); p.urls=p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.text=''; p.err=''; render(); return; }
+    p.files=[...(t.files||[])].slice(0,(p.mode==='store'||p.mode==='prices')?IMG_MAX:1); p.urls=p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.text=''; p.err=''; render(); return; }
   if(t.dataset.ph&&ui.photo){ const p=ui.photo, k=t.dataset.ph; if(k==='kg') p.kg=Math.max(0,num(t.value)); else if(k==='l') p.l=Math.max(0,num(t.value)); else p[k]=t.value;
     if(k==='an'){ const x=animalById(p.an); if(x&&p.feed&&!F[p.feed].for.includes(x.sp)) p.feed=''; } render(); return; }
   if(t.dataset.import){ const file=t.files&&t.files[0]; if(!file) return;

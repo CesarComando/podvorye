@@ -238,3 +238,11 @@ body.touring .install-bar{display:none}
 .fm-total td{font-weight:600;border-top:1px dashed var(--line);padding-left:26px}
 .fm-total td.n{padding-left:6px}
 .fm-grand td{font-weight:700;border-top:2px solid var(--wheat);font-size:16px}
+
+.msec-row:hover td,.msec-row.on td{background:var(--straw-soft)}
+
+/* ---------- Магазины ---------- */
+.stores{display:flex;flex-direction:column;gap:10px}
+.store-card{display:flex;flex-direction:column;gap:8px}
+.price-row input[type=checkbox]{width:22px;height:22px;flex:0 0 auto}
+.price-row .num{flex:0 0 88px;width:88px;min-width:0;text-align:right}
