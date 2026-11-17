@@ -2,9 +2,11 @@
 // чтобы Claude прочитал его так же, как фото. Библиотека грузится только когда выбран PDF.
 // Длинный чек режем на 2–4 куска с небольшим нахлёстом: так мелкий шрифт не сжимается и читается.
 export async function pdfToImages(file) {
-  const pdfjs = await import('pdfjs-dist')
-  const worker = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
-  pdfjs.GlobalWorkerOptions.workerSrc = worker
+  // pdf.js берём с CDN по точной версии: в сборку приложения он не входит, грузится только при выборе PDF
+  // (для чтения чека всё равно нужен интернет — его читает Claude).
+  const CDN = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/'
+  const pdfjs = await import(/* @vite-ignore */ CDN + 'pdf.min.mjs')
+  pdfjs.GlobalWorkerOptions.workerSrc = CDN + 'pdf.worker.min.mjs'
   const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
   try {
     const pages = []
