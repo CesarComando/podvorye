@@ -3,7 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { micBtn } from './voice.js'
 import { showInstall } from './install.js'
 import { initTour, startTour } from './tour.js'
-import { getSession, onAuth, signIn, signUp, signOut, myFarm, joinFarm, createInvite, listMembers, removeMember,
+import { getSession, onAuth, signIn, signUp, signOut, changePassword, myFarm, joinFarm, createInvite, listMembers, removeMember,
   fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
 
 // Новая версия приложения ставится сама; проверяем при открытии и при возвращении в приложение.
@@ -457,7 +457,14 @@ function viewTeam(){
         <p class="hint" style="margin:6px 0 0">Данные на этом телефоне заменятся данными хозяйства, к которому вы присоединяетесь.</p>
       </details>
       ${farm&&!aiEnabled?'<p class="hint" style="margin:0">Помощник Claude и фото для этого хозяйства пока не включены — их включает владелец приложения.</p>':''}
+      ${ui.pwForm?`<div class="builder"><strong>Новый пароль</strong>
+        <span class="row nowrap"><input type="${ui.pwShow?'text':'password'}" id="new-pw" autocomplete="new-password" placeholder="не короче 6 символов" style="flex:1;min-width:0"><button type="button" class="ghost" data-act="pw-show">${ui.pwShow?'Скрыть':'Показать'}</button></span>
+        ${ui.pwMsg?`<div class="notice">${esc(ui.pwMsg)}</div>`:''}
+        <div class="row"><button class="primary" data-act="pw-save" ${ui.pwBusy?'disabled':''}>${ui.pwBusy?'Минутку…':'Сохранить пароль'}</button><button data-act="pw-cancel">Отмена</button></div>
+        <p class="hint" style="margin:0">Запомните или запишите его: с ним можно войти на другом телефоне или в другом браузере.</p></div>`
+        :(ui.pwDone?'<div class="notice">Пароль сменён ✓</div>':'')}
       <div class="row"><span class="hint">Вы вошли как ${esc(shownLogin(me.email))}</span>
+        ${ui.pwForm?'':'<button class="ghost" data-act="pw-open">Сменить пароль</button>'}
         ${ui.confirmOut?`<span class="hint">${dirty?'Есть не отправленные изменения — они пропадут. ':''}Выйти?</span><button class="danger" data-act="sign-out-yes">Выйти</button><button data-act="sign-out-no">Отмена</button>`:'<button class="ghost" data-act="sign-out">Выйти из аккаунта</button>'}</div>
     </div></section>`;
 }
@@ -2082,6 +2089,16 @@ document.addEventListener('click',e=>{
   if(act==='auth-show'){ const pw=document.getElementById('au-pw'), em=document.getElementById('au-email'); const v=pw?pw.value:''; if(em) ui.auEmail=em.value; ui.auShow=!ui.auShow; render(); const p2=document.getElementById('au-pw'); if(p2){ p2.value=v; p2.focus(); } return; }
   if(act==='auth-switch'){ const el=document.getElementById('au-email'); if(el) ui.auEmail=el.value; ui.authMode=ui.authMode==='up'?'in':'up'; authErr=''; render(); return; }
   if(act==='sign-out'){ ui.confirmOut=true; render(); return; }
+  if(act==='pw-open'){ ui.pwForm=true; ui.pwMsg=''; ui.pwDone=false; render(); setTimeout(()=>{ const el=document.getElementById('new-pw'); if(el) el.focus(); },40); return; }
+  if(act==='pw-cancel'){ ui.pwForm=false; ui.pwMsg=''; render(); return; }
+  if(act==='pw-show'){ const el=document.getElementById('new-pw'), v=el?el.value:''; ui.pwShow=!ui.pwShow; ui.pwMsg=''; render(); const e2=document.getElementById('new-pw'); if(e2){ e2.value=v; e2.focus(); } return; }
+  if(act==='pw-save'){ const el=document.getElementById('new-pw'), v=el?el.value:'';
+    if(v.length<6){ ui.pwMsg='Пароль — не короче 6 символов.'; render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; return; }
+    if(!navigator.onLine){ ui.pwMsg='Нужен интернет, чтобы сменить пароль.'; render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; return; }
+    ui.pwBusy=true; ui.pwMsg=''; render();
+    changePassword(v).then(()=>{ ui.pwBusy=false; ui.pwForm=false; ui.pwDone=true; ui.pwShow=false; render(); })
+      .catch(e=>{ ui.pwBusy=false; ui.pwMsg=e.message||String(e); render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; });
+    return; }
   if(act==='sign-out-no'){ ui.confirmOut=false; render(); return; }
   if(act==='sign-out-yes'){ ui.confirmOut=false; doSignOut(); return; }
   if(act==='make-invite'){ if(!farm) return; t.disabled=true; createInvite(farm.id).then(c=>{ ui.invite=c; render(); }).catch(()=>{ note='Не получилось создать код — проверьте интернет.'; render(); }); return; }
