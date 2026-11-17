@@ -1760,6 +1760,9 @@ function viewShop(){
 }
 // ---- Магазины: название, адрес, цены (вручную или по фото ценников) ----
 const ownStores=()=>{ if(!live('stores').length){ if(!S) S=blank(); S.stores=(S.stores||[]).concat(STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}))); } return live('stores'); };
+// Буклеты акций (visasakcijas.lv собирает их по магазинам): открываем страницу сети, там свежие буклеты недели.
+const BOOKLETS={maxima:'maxima-akcijas', rimi:'rimi-akcijas', lidl:'lidl-akcijas', mego:'mego-akcijas', elvi:'elvi-akcijas', 'top!':'top!-akcijas', top:'top!-akcijas'};
+const bookletUrl=(name)=>{ const n=normName(name), k=Object.keys(BOOKLETS).sort((a,b)=>b.length-a.length).find(k=>n===k||n.startsWith(k+' ')); return k?`https://www.visasakcijas.lv/${BOOKLETS[k]}.htm`:''; };
 function storePrices(name){
   const by={}; for(const p of live('shopPrices').filter(x=>x.store===name)){ const k=p.name; if(!by[k]||p.date>by[k].date||(p.date===by[k].date&&(p.updatedAt||0)>(by[k].updatedAt||0))) by[k]=p; }
   return Object.values(by).sort((a,b)=>a.name.localeCompare(b.name,'ru'));
@@ -1772,6 +1775,7 @@ function viewStores(){
       <label class="f">Адрес<input data-storeaddr="${esc(st.name)}" value="${esc(st.address||'')}" placeholder="улица, город — для маршрута" autocomplete="off"></label>
       <div class="row">
         ${canPhoto?`<button class="primary" data-act="photo-open" data-m="prices" data-store="${esc(st.name)}">📷 Фото цен</button>`:''}
+        ${bookletUrl(st.name)?`<a class="btn" href="${bookletUrl(st.name)}" target="_blank" rel="noopener">🏷️ Буклет акций</a>`:''}
         ${pr.length?`<button data-act="store-open" data-s="${esc(st.name)}" aria-expanded="${open}">${open?'Скрыть цены':'Цены'}</button>`:''}
         ${ui.confirmStore===st.name?`<button class="danger" data-act="store-del-yes" data-s="${esc(st.name)}">Удалить магазин</button><button data-act="store-del-no">Отмена</button>`:`<button class="ghost" data-act="store-del" data-s="${esc(st.name)}" aria-label="Удалить магазин ${esc(st.name)}">✕</button>`}
       </div>
@@ -1779,6 +1783,7 @@ function viewStores(){
     </div>`; }).join('');
   return `<section class="section"><div class="section-head"><h2>Магазины</h2><span class="hint">адрес и цены</span></div>
     ${canPhoto?'<p class="hint" style="margin:0 0 8px">Нажмите «📷 Фото цен» у нужного магазина и сфотографируйте ценники — цены запишутся в этот магазин. Фото не сохраняется.</p>':''}
+    <p class="hint" style="margin:0 0 8px">«🏷️ Буклет акций» открывает свежие акции недели этого магазина (сайт visasakcijas.lv).</p>
     <div class="stores">${cards}</div></section>
   <section class="section"><div class="section-head"><h2>Добавить магазин</h2></div><div class="card">
     <div class="form-grid"><label class="f">Название<input id="st-new-name" placeholder="например, Rimi Jaunbūve"></label>
