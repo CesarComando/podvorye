@@ -3,18 +3,21 @@
 // но её всегда можно открыть кнопкой «?» вверху.
 import { markTourDone } from './backend.js'
 
-const LS_DONE = 'miglani-tour-done-v1'
+// Номер версии подсказки: при новых разделах увеличиваем — подсказка спросит ещё раз.
+const TOUR_V = 2
+const LS_DONE = 'miglani-tour-done-v' + TOUR_V
 let opts = null, shownThisOpen = false, step = 0, steps = [], timer = null
 let root = null
 
 const isDone = () => {
   try { if (localStorage.getItem(LS_DONE) === '1') return true } catch {}
   const s = opts && opts.getSession && opts.getSession()
-  return !!(s && s.user && s.user.user_metadata && s.user.user_metadata.tour_done)
+  const m = s && s.user && s.user.user_metadata
+  return !!(m && (m.tour_v || 0) >= TOUR_V)
 }
 const setDone = () => {
   try { localStorage.setItem(LS_DONE, '1') } catch {}
-  markTourDone()
+  markTourDone(TOUR_V)
 }
 
 // Шаги. target — что подсветить; before — что открыть перед шагом.
@@ -24,14 +27,21 @@ function buildSteps() {
     { target: 'nav.tabs [data-tab="tasks"]', before: 'tasks', title: 'Раздел «Дела»',
       text: 'Твой ежедневник: что сделать сегодня, завтра, на неделе. Напоминания и заметка дня.' },
     { target: 'nav.tabs [data-tab="home"]', before: 'tasks', title: 'Раздел «Дом»',
-      text: 'Счета и напоминания об оплате, учёт денег, машина (заправки, техосмотр), списки покупок, магазины с ценами и дрова.' },
+      text: 'Счета и напоминания об оплате, учёт денег, машина (заправки, техосмотр), списки покупок, корзина, магазины с ценами и акциями, дрова.' },
     { target: 'nav.tabs [data-tab="farm"]', before: 'tasks', title: 'Раздел «Хозяйство»',
       text: 'Животные, рацион, запасы кормов, журнал надоев и яиц, советы.' },
+    { target: '[data-act="home-view"][data-v="basket"]', before: 'home:basket', title: 'Новое: «Корзина»',
+      text: 'Что мы покупаем регулярно, сколько в месяц и на какую сумму, где это дешевле и куда уходят деньги. Считается по чекам из магазина. Кнопка «+» добавляет товар в список «Домой».' },
+    { target: '[data-act="home-view"][data-v="stores"]', before: 'home:stores', title: 'Новое: акции магазинов',
+      text: 'В «Магазинах» у Maxima, Rimi, Lidl, Mego, top! и ABrands есть кнопка «🏷️ Буклет акций» — открывает свежие акции недели.' },
     { target: '#qa', before: 'tasks', title: 'Здесь пиши новое дело',
       text: 'Пиши обычными словами, например: «купить комбикорм завтра 10:00» — дата и время поставятся сами. Потом нажми зелёный «+».' },
     { target: '#day-note', before: 'tasks', title: 'Заметка дня',
       text: 'Сюда — всё, что важно помнить в этот день.' },
   ]
+  if (document.querySelector('.fab.alt')) list.push(
+    { target: '.fab.alt', before: 'tasks', title: 'Новое: чеки из магазина',
+      text: 'Камера → «Чек магазина». Выбери PDF-чеки из приложения Mans Rimi или сфотографируй бумажный чек — сумма запишется в «Учёт», цены в «Магазины», товары в «Корзину». Перед записью всё можно проверить.' })
   if (hasHelp) {
     list.push(
       { target: '[data-act="chat-open"]', before: 'tasks', title: 'Если что-то неясно — жми сюда',

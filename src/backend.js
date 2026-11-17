@@ -50,7 +50,7 @@ export async function changePassword(password) {
     throw new Error(ruAuth(error))
   }
 }
-export async function markTourDone() { try { await sb.auth.updateUser({ data: { tour_done: true } }) } catch {} }
+export async function markTourDone(v = 1) { try { await sb.auth.updateUser({ data: { tour_done: true, tour_v: v } }) } catch {} }
 
 // ---------- хозяйство ----------
 export async function myFarm() {
