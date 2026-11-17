@@ -1546,8 +1546,23 @@ function viewCar(){
     <p class="hint" style="margin:0">Достаточно двух из трёх: литры, сумма, цена — третье посчитается.</p>
     <div class="row"><button class="primary" data-act="fuel-add">Записать заправку</button></div></div></section>
   ${s.stations.length>1?`<section class="section"><div class="section-head"><h2>Где дешевле</h2><span class="hint">по вашим заправкам</span></div><div class="card"><div class="tbl-wrap"><table><tbody>${s.stations.map(x=>`<tr><td>${esc(x.n)}</td><td class="n">${money(x.avg)}/л</td><td class="n">${x.cnt} раз</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
-  ${Object.keys(s.byMonth).length?`<section class="section"><div class="section-head"><h2>По месяцам</h2></div><div class="card"><div class="tbl-wrap"><table><tbody>${Object.entries(s.byMonth).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12).map(([k,v])=>`<tr><td>${monthName(k)}</td><td class="n">${fmt(v.l,1)} л</td><td class="n">${money(v.sum)}</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
+  ${Object.keys(s.byMonth).length?fuelMonths(s):''}
   <div class="row"><button class="ghost" data-act="car-edit" data-c="${c.id}">Сроки и данные машины</button><button class="ghost" data-act="car-edit" data-c="new">+ ещё машина</button></div>`;
+}
+// Заправки по месяцам: нажал на месяц — видно каждую заправку по дням, итог месяца в конце; внизу — итог за все месяцы.
+function fuelMonths(s){
+  if(!ui.fuelOpen) ui.fuelOpen={[todayISO().slice(0,7)]:true};
+  const months=Object.entries(s.byMonth).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
+  const tot=months.reduce((a,[,v])=>({l:a.l+v.l,sum:a.sum+v.sum}),{l:0,sum:0});
+  const rows=months.map(([k,v])=>{
+    const open=!!ui.fuelOpen[k];
+    const days=open?s.fills.filter(f=>f.date.slice(0,7)===k).sort((a,b)=>a.date.localeCompare(b.date)||(+a.odo||0)-(+b.odo||0)):[];
+    return `<tr class="fm-row"><td colspan="3"><button class="fm-btn" data-act="fuel-month" data-m="${k}" aria-expanded="${open}"><span class="fm-arrow">${open?'▾':'▸'}</span><span class="fm-name">${monthName(k)}</span><span class="fm-l">${fmt(v.l,1)} л</span><span class="fm-sum">${money(v.sum)}</span></button></td></tr>`+
+      (open?days.map(f=>`<tr class="fm-day"><td>${shortDate(f.date)}${f.station?`<span class="small">${esc(f.station)}</span>`:''}</td><td class="n">${fmt(+f.liters||0,1)} л</td><td class="n">${money(+f.sum||0)}</td></tr>`).join('')+
+        `<tr class="fm-total"><td>Итого за месяц</td><td class="n">${fmt(v.l,1)} л</td><td class="n">${money(v.sum)}</td></tr>`:'');
+  }).join('');
+  return `<section class="section"><div class="section-head"><h2>Заправки по месяцам</h2><span class="hint">нажмите на месяц</span></div><div class="card"><div class="tbl-wrap"><table class="fuel-months"><tbody>${rows}
+    <tr class="fm-grand"><td>Всего${months.length>1?` за ${months.length} мес.`:''}</td><td class="n">${fmt(tot.l,1)} л</td><td class="n">${money(tot.sum)}</td></tr></tbody></table></div></div></section>`;
 }
 function carForm(c){
   c=c||{name:'',plate:'',fuel:'95',inspection:'',octa:'',kasko:'',serviceKm:15000,serviceMonths:12,lastServiceKm:'',lastServiceDate:''};
@@ -2046,6 +2061,7 @@ document.addEventListener('click',e=>{
     if(t.dataset.c==='new'){ const c=touch(Object.assign({id:uid()},p)); S.cars.push(c); ui.car=c.id; } else touch(Object.assign(live('cars').find(x=>x.id===t.dataset.c)||{},p));
     ui.carEdit=null; save(); render(); return; }
   if(act==='car-del'){ const c=live('cars').find(x=>x.id===t.dataset.c); if(c){ c.deleted=true; touch(c); } ui.carEdit=null; ui.car=null; save(); render(); return; }
+  if(act==='fuel-month'){ const k=t.dataset.m; ui.fuelOpen=ui.fuelOpen||{}; ui.fuelOpen[k]=!ui.fuelOpen[k]; render(); return; }
   if(act==='fuel-add'){ const g=(k)=>document.getElementById('fu-'+k); let l=num(g('l').value), s=num(g('s').value), p=num(g('p').value);
     if(!l&&s&&p) l=s/p; if(!s&&l&&p) s=l*p; if(!p&&l&&s) p=s/l;
     if(!(l>0&&s>0)){ flash('Впишите два из трёх: литры, сумму или цену за литр.'); return; }
