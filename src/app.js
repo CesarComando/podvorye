@@ -2,6 +2,7 @@
 import { registerSW } from 'virtual:pwa-register'
 import { micBtn } from './voice.js'
 import { showInstall } from './install.js'
+import { initTour, startTour } from './tour.js'
 import { getSession, onAuth, signIn, signUp, signOut, myFarm, joinFarm, createInvite, listMembers, removeMember,
   fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
 
@@ -323,6 +324,7 @@ async function initStore(){
   }catch(e){}
   render(); checkReminders();
   if(session) connect();
+  if(!ui.task) startTour();
   onAuth(s=>{ const was=!!session; session=s; if(s&&!was) connect(); });
   window.addEventListener('online',()=>{ if(session&&!farm) connect(); else if(dirty) flush(); });
   window.addEventListener('offline',()=>setSync('local','Нет связи — сохраняю в телефоне'));
@@ -337,6 +339,8 @@ async function doSignOut(){
 document.addEventListener('focusout',()=>{ setTimeout(()=>{ if(deferRemote&&!/INPUT|SELECT/.test((document.activeElement||{}).tagName||'')){ const f=deferRemote; deferRemote=null; f(); } },50); });
 
 /* ---------- Утилиты ---------- */
+// Логин вместо внутреннего адреса: nastya@miglani.daugavpilstopteam.lv → nastya
+const shownLogin=(e)=>String(e||'').replace(/@miglani\.daugavpilstopteam\.lv$/,'');
 const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=(n,d=1)=>(+n||0).toLocaleString('ru-RU',{maximumFractionDigits:d,minimumFractionDigits:0});
 const num=(v)=>{ const x=parseFloat(String(v).replace(',','.').replace(/\s/g,'')); return isFinite(x)?x:0; };
@@ -405,6 +409,7 @@ function render(){
   if(!loaded){ main.innerHTML=`<div class="card empty"><p class="hint">Загружаю данные хозяйства…</p>${note?`<div class="notice">${esc(note)}</div>`:''}</div>`; return; }
   const top=note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'';
   document.querySelector('nav.tabs').style.display=authView?'none':'';
+  { const hb=document.getElementById('tour-btn'); if(hb) hb.hidden=authView; }
   if(authView){ main.innerHTML=top+viewAuth(); return; }
   if(FARM_TABS.includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+farmSeg()+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
   if(!S&&ui.tab==='home') S=blank();
@@ -413,22 +418,23 @@ function render(){
 }
 function viewAuth(){
   const up=ui.authMode==='up';
+  if(ui.auEmail===undefined){ try{ ui.auEmail=localStorage.getItem('miglani-last-login')||''; }catch(e){ ui.auEmail=''; } }
   return `<div class="card" style="max-width:460px;margin:8px auto">
     <div class="row" style="justify-content:center">${['horse','cow','goat','hens'].map(k=>aniIcon(k,'lg')).join('')}</div>
     <h2 style="text-align:center">${up?'Создать аккаунт':'Вход в хозяйство'}</h2>
-    <label class="f">Почта<input type="email" id="au-email" inputmode="email" autocomplete="email" value="${esc(ui.auEmail||'')}" placeholder="name@example.com"></label>
-    <label class="f">Пароль${up?' (не короче 6 символов)':''}<input type="password" id="au-pw" autocomplete="${up?'new-password':'current-password'}"></label>
+    <label class="f">Логин<input type="text" id="au-email" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" value="${esc(ui.auEmail||'')}" placeholder="например, nastya"></label>
+    <label class="f">Пароль${up?' (не короче 6 символов)':''}<span class="row nowrap"><input type="${ui.auShow?'text':'password'}" id="au-pw" autocomplete="${up?'new-password':'current-password'}" style="flex:1;min-width:0"><button type="button" class="ghost" data-act="auth-show" aria-label="${ui.auShow?'Скрыть пароль':'Показать пароль'}">${ui.auShow?'Скрыть':'Показать'}</button></span></label>
     ${authErr?`<div class="notice">${esc(authErr)}</div>`:''}
     <button class="primary" data-act="auth-go" ${authBusy?'disabled':''}>${authBusy?'Минутку…':up?'Создать аккаунт':'Войти'}</button>
     <button class="ghost" data-act="auth-switch">${up?'Уже есть аккаунт — войти':'Первый раз? Создать аккаунт'}</button>
-    <p class="hint" style="margin:0">Для первого входа нужен интернет. Дальше приложение работает и без связи — записи отправятся сами, когда она появится.</p>
+    <p class="hint" style="margin:0">Телефон запомнит вход — вводить логин и пароль нужно только один раз. Забыли пароль — попросите Дайниса сбросить его. Старый вход по почте тоже работает: просто впишите почту вместо логина.</p>
   </div>`;
 }
 async function authGo(){
   const em=(document.getElementById('au-email').value||'').trim(), pw=document.getElementById('au-pw').value||'';
-  ui.auEmail=em; if(!em||!pw){ authErr='Впишите почту и пароль.'; render(); return; }
+  ui.auEmail=em; if(!em||!pw){ authErr='Впишите логин и пароль.'; render(); return; }
   authBusy=true; authErr=''; render();
-  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); session=await getSession(); await connect(); }
+  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); try{ localStorage.setItem('miglani-last-login',em); }catch(e){} session=await getSession(); await connect(); startTour(); }
   catch(e){ authErr=e.message||String(e); }
   authBusy=false; render();
 }
@@ -438,7 +444,7 @@ function viewTeam(){
   const me=session.user, mem=ui.members||[], owner=mem.some(m=>m.user_id===me.id&&m.role==='owner');
   return `<section class="section"><div class="section-head"><h2>Кто ведёт хозяйство</h2><span class="hint">общие данные на всех телефонах</span></div>
     <div class="card">
-      ${farm?(mem.length?`<div class="tbl-wrap"><table><tbody>${mem.map(m=>`<tr><td>${esc(m.email||'—')}${m.user_id===me.id?' <span class="chip">это вы</span>':''}<span class="small">${m.role==='owner'?'владелец':'участник'}</span></td>
+      ${farm?(mem.length?`<div class="tbl-wrap"><table><tbody>${mem.map(m=>`<tr><td>${esc(shownLogin(m.email)||'—')}${m.user_id===me.id?' <span class="chip">это вы</span>':''}<span class="small">${m.role==='owner'?'владелец':'участник'}</span></td>
         <td class="n">${owner&&m.user_id!==me.id?(ui.confirmRm===m.user_id?`<button class="danger" data-act="rm-member-yes" data-u="${m.user_id}">Убрать</button> <button data-act="rm-member-no">Отмена</button>`:`<button class="ghost" data-act="rm-member" data-u="${m.user_id}">Убрать</button>`):''}</td></tr>`).join('')}</tbody></table></div>`:'<p class="hint" style="margin:0">Загружаю…</p>'):'<p class="hint" style="margin:0">Нет связи с сервером — список появится, когда будет интернет.</p>'}
       ${farm&&owner?`<div class="row"><button class="primary" data-act="make-invite">Пригласить человека</button></div>
         ${ui.invite?`<div class="notice"><div>Код приглашения: <strong style="font-size:20px;letter-spacing:.12em">${esc(ui.invite)}</strong></div>
@@ -448,7 +454,7 @@ function viewTeam(){
         <p class="hint" style="margin:6px 0 0">Данные на этом телефоне заменятся данными хозяйства, к которому вы присоединяетесь.</p>
       </details>
       ${farm&&!aiEnabled?'<p class="hint" style="margin:0">Помощник Claude и фото для этого хозяйства пока не включены — их включает владелец приложения.</p>':''}
-      <div class="row"><span class="hint">Вы вошли как ${esc(me.email||'')}</span>
+      <div class="row"><span class="hint">Вы вошли как ${esc(shownLogin(me.email))}</span>
         ${ui.confirmOut?`<span class="hint">${dirty?'Есть не отправленные изменения — они пропадут. ':''}Выйти?</span><button class="danger" data-act="sign-out-yes">Выйти</button><button data-act="sign-out-no">Отмена</button>`:'<button class="ghost" data-act="sign-out">Выйти из аккаунта</button>'}</div>
     </div></section>`;
 }
@@ -1994,7 +2000,7 @@ document.addEventListener('click',e=>{
   if(act==='req-open'){ ui.chat.req=true; render(); setTimeout(()=>{ const el=document.getElementById('req-text'); if(el) el.focus(); },40); return; }
   if(act==='req-close'){ ui.chat.req=false; render(); return; }
   if(act==='req-send'){ const v=(document.getElementById('req-text').value||'').trim(); if(!v) return; if(!S) S=blank();
-    S.requests.push(touch({id:uid(), text:v, by:session&&session.user.email||'', status:'new', createdAt:Date.now()})); ui.chat.req=false; save();
+    S.requests.push(touch({id:uid(), text:v, by:session&&shownLogin(session.user.email)||'', status:'new', createdAt:Date.now()})); ui.chat.req=false; save();
     ui.chat.turns.push({role:'assistant',content:'Спасибо, пожелание записала и передала владельцу хозяйства 💛 Статус будет виден во вкладке «Хозяйство».'}); render(); return; }
   if(act==='req-copy'){ copyText(reqTask()).then(ok=>flash(ok?'Скопировано. Вставьте в чат Claude Code в VS Code.':'Не получилось скопировать.')); return; }
   if(act==='go'){ const [tab,sub]=t.dataset.go.split(':'); ui.tab=tab; if(tab==='home') ui.homeView=sub; if(tab==='stock') ui.stockView=sub||'feed'; render(); window.scrollTo(0,0); return; }
@@ -2070,6 +2076,7 @@ document.addEventListener('click',e=>{
     save(); render(); return; }
   if(act==='heat-ask'){ ui.chat=ui.chat||{turns:[]}; ui.chat.open=true; ui.chat.draft='Посмотри мой расчёт по дровам и отоплению. Как сделать в доме теплее и потратить меньше денег? Что поменять в первую очередь?'; render(); return; }
   if(act==='auth-go'){ authGo(); return; }
+  if(act==='auth-show'){ const pw=document.getElementById('au-pw'), em=document.getElementById('au-email'); const v=pw?pw.value:''; if(em) ui.auEmail=em.value; ui.auShow=!ui.auShow; render(); const p2=document.getElementById('au-pw'); if(p2){ p2.value=v; p2.focus(); } return; }
   if(act==='auth-switch'){ const el=document.getElementById('au-email'); if(el) ui.auEmail=el.value; ui.authMode=ui.authMode==='up'?'in':'up'; authErr=''; render(); return; }
   if(act==='sign-out'){ ui.confirmOut=true; render(); return; }
   if(act==='sign-out-no'){ ui.confirmOut=false; render(); return; }
@@ -2227,5 +2234,11 @@ document.addEventListener('change',e=>{
 
 document.getElementById('today').textContent=new Date().toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'});
 render();
+// Подсказка-инструкция: спрашивает при входе, пока человек не ответит «Да, разобралась».
+initTour({
+  ready: ()=>loaded&&!authView&&(!!session||(import.meta.env.DEV&&location.hash.startsWith('#demo'))), // #demo — только для проверки при разработке
+  getSession: ()=>session,
+  show: (tab)=>{ if(ui.tab!==tab||ui.task||ui.bill||ui.feed||ui.photo||(ui.chat&&ui.chat.open)){ ui.tab=tab; ui.task=null; ui.bill=null; ui.feed=null; ui.photo=null; if(ui.chat) ui.chat.open=false; render(); } }
+});
 initStore();
 initCaps();

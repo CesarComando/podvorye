@@ -12,24 +12,38 @@ export const onAuth = (fn) => sb.auth.onAuthStateChange((_e, s) => fn(s))
 
 const ruAuth = (e) => {
   const m = String(e?.message || e || '')
-  if (/Invalid login credentials/i.test(m)) return 'Неверная почта или пароль.'
-  if (/already registered|already exists/i.test(m)) return 'Такая почта уже зарегистрирована — войдите.'
+  if (/Invalid login credentials/i.test(m)) return 'Неверный логин или пароль.'
+  if (/already registered|already exists/i.test(m)) return 'Такой логин уже занят — войдите или придумайте другой.'
   if (/Password should be at least/i.test(m)) return 'Пароль — не короче 6 символов.'
-  if (/valid email|invalid email/i.test(m)) return 'Проверьте адрес почты.'
+  if (/valid email|invalid email/i.test(m)) return 'Логин — латинскими буквами и цифрами, например nastya.'
   if (/rate limit|too many/i.test(m)) return 'Слишком много попыток — подождите минуту.'
   if (/fetch|network/i.test(m)) return 'Нет интернета — для первого входа нужна связь.'
   return 'Не получилось: ' + m
 }
-export async function signIn(email, password) {
+// Простой вход по логину: логин превращается во внутренний адрес (письма на него не отправляются —
+// подтверждение почты в проекте выключено). Если вписали настоящую почту — входим по почте, как раньше.
+const LOGIN_DOMAIN = 'miglani.daugavpilstopteam.lv'
+const TR = { а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'e',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'c',ч:'ch',ш:'sh',щ:'sch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
+  ā:'a',č:'c',ē:'e',ģ:'g',ī:'i',ķ:'k',ļ:'l',ņ:'n',š:'s',ū:'u',ž:'z' }
+export function loginToEmail(login) {
+  const v = String(login || '').trim().toLowerCase()
+  if (v.includes('@')) return v
+  const l = [...v].map(c => TR[c] ?? c).join('').replace(/[^a-z0-9._-]/g, '')
+  return l ? `${l}@${LOGIN_DOMAIN}` : ''
+}
+export async function signIn(login, password) {
+  const email = loginToEmail(login)
   const { error } = await sb.auth.signInWithPassword({ email, password })
   if (error) throw new Error(ruAuth(error))
 }
-export async function signUp(email, password) {
+export async function signUp(login, password) {
+  const email = loginToEmail(login)
   const { data, error } = await sb.auth.signUp({ email, password })
   if (error) throw new Error(ruAuth(error))
-  if (!data.session) throw new Error('Аккаунт создан. Подтвердите почту по ссылке из письма и войдите.')
+  if (!data.session) throw new Error('Аккаунт создан. Нажмите «Войти».')
 }
 export async function signOut() { await sb.auth.signOut() }
+export async function markTourDone() { try { await sb.auth.updateUser({ data: { tour_done: true } }) } catch {} }
 
 // ---------- хозяйство ----------
 export async function myFarm() {
