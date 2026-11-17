@@ -205,6 +205,9 @@ function normalize(d){
   for(const k of ['tasks','money','bills','fuel']) for(const x of out[k]) if(x&&x.sec==='ferma') x.sec='farm';
   // свой список магазинов, созданный раньше, дополняем сетью Beta
   if(out.stores.length&&!out.stores.some(s=>s.name==='Beta')) out.stores.push({id:'st_beta', name:'Beta', address:'', updatedAt:1});
+  // Elvi в Даугавпилсе нет — убираем его из списка магазинов один раз (если для него не записано ни одной цены)
+  if(!out.settings.elviRemoved){ for(const s of out.stores) if(s&&!s.deleted&&String(s.name||'').trim().toLowerCase()==='elvi'&&!out.shopPrices.some(p=>p&&p.store===s.name)){ s.deleted=true; s.updatedAt=Date.now(); }
+    out.settings.elviRemoved=true; }
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
@@ -1659,7 +1662,7 @@ function carForm(c){
 }
 
 // ---- Покупки ----
-const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','Elvi','top!','Beta'];
+const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','top!','Beta'];   // Elvi в Даугавпилсе нет
 const RCATS=['Мясо','Рыба и икра','Молочное и яйца','Овощи и фрукты','Хлеб и выпечка','Бакалея и крупы','Сладости и снеки','Напитки','Готовая еда','Корм для животных','Дом и хозтовары','Гигиена и аптека','Цветы и подарки','Залог за тару','Прочее'], RCAT_DEP='Залог за тару';
 
 // ---- Корзина: что семья покупает регулярно (по записанным чекам) ----
@@ -1761,7 +1764,7 @@ function viewShop(){
 // ---- Магазины: название, адрес, цены (вручную или по фото ценников) ----
 const ownStores=()=>{ if(!live('stores').length){ if(!S) S=blank(); S.stores=(S.stores||[]).concat(STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}))); } return live('stores'); };
 // Буклеты акций (visasakcijas.lv собирает их по магазинам): открываем страницу сети, там свежие буклеты недели.
-const BOOKLETS={maxima:'maxima-akcijas', rimi:'rimi-akcijas', lidl:'lidl-akcijas', mego:'mego-akcijas', elvi:'elvi-akcijas', 'top!':'top!-akcijas', top:'top!-akcijas'};
+const BOOKLETS={maxima:'maxima-akcijas', rimi:'rimi-akcijas', lidl:'lidl-akcijas', mego:'mego-akcijas', 'top!':'top!-akcijas', top:'top!-akcijas'};
 const bookletUrl=(name)=>{ const n=normName(name), k=Object.keys(BOOKLETS).sort((a,b)=>b.length-a.length).find(k=>n===k||n.startsWith(k+' ')); return k?`https://www.visasakcijas.lv/${BOOKLETS[k]}.htm`:''; };
 function storePrices(name){
   const by={}; for(const p of live('shopPrices').filter(x=>x.store===name)){ const k=p.name; if(!by[k]||p.date>by[k].date||(p.date===by[k].date&&(p.updatedAt||0)>(by[k].updatedAt||0))) by[k]=p; }
