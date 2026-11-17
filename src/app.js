@@ -208,6 +208,9 @@ function normalize(d){
   // Elvi в Даугавпилсе нет — убираем его из списка магазинов один раз (если для него не записано ни одной цены)
   if(!out.settings.elviRemoved){ for(const s of out.stores) if(s&&!s.deleted&&String(s.name||'').trim().toLowerCase()==='elvi'&&!out.shopPrices.some(p=>p&&p.store===s.name)){ s.deleted=true; s.updatedAt=Date.now(); }
     out.settings.elviRemoved=true; }
+  // ABrands (Cash & Carry в Даугавпилсе, с 2025) — добавляем в сохранённый список один раз
+  if(!out.settings.abrandsAdded){ if(out.stores.length&&!out.stores.some(s=>s&&String(s.name||'').trim().toLowerCase()==='abrands')) out.stores.push({id:'st_abrands', name:'ABrands', address:'', updatedAt:Date.now()});
+    out.settings.abrandsAdded=true; }
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
@@ -1662,7 +1665,7 @@ function carForm(c){
 }
 
 // ---- Покупки ----
-const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','top!','Beta'];   // Elvi в Даугавпилсе нет
+const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','top!','Beta','ABrands'];   // Elvi в Даугавпилсе нет
 const RCATS=['Мясо','Рыба и икра','Молочное и яйца','Овощи и фрукты','Хлеб и выпечка','Бакалея и крупы','Сладости и снеки','Напитки','Готовая еда','Корм для животных','Дом и хозтовары','Гигиена и аптека','Цветы и подарки','Залог за тару','Прочее'], RCAT_DEP='Залог за тару';
 
 // ---- Корзина: что семья покупает регулярно (по записанным чекам) ----
@@ -1764,8 +1767,8 @@ function viewShop(){
 // ---- Магазины: название, адрес, цены (вручную или по фото ценников) ----
 const ownStores=()=>{ if(!live('stores').length){ if(!S) S=blank(); S.stores=(S.stores||[]).concat(STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}))); } return live('stores'); };
 // Буклеты акций (visasakcijas.lv собирает их по магазинам): открываем страницу сети, там свежие буклеты недели.
-const BOOKLETS={maxima:'maxima-akcijas', rimi:'rimi-akcijas', lidl:'lidl-akcijas', mego:'mego-akcijas', 'top!':'top!-akcijas', top:'top!-akcijas'};
-const bookletUrl=(name)=>{ const n=normName(name), k=Object.keys(BOOKLETS).sort((a,b)=>b.length-a.length).find(k=>n===k||n.startsWith(k+' ')); return k?`https://www.visasakcijas.lv/${BOOKLETS[k]}.htm`:''; };
+const BOOKLETS={maxima:'maxima-akcijas', rimi:'rimi-akcijas', lidl:'lidl-akcijas', mego:'mego-akcijas', 'top!':'top!-akcijas', top:'top!-akcijas', abrands:'https://abrands.lv/'};
+const bookletUrl=(name)=>{ const n=normName(name), k=Object.keys(BOOKLETS).sort((a,b)=>b.length-a.length).find(k=>n===k||n.startsWith(k+' ')); return k?(/^https:/.test(BOOKLETS[k])?BOOKLETS[k]:`https://www.visasakcijas.lv/${BOOKLETS[k]}.htm`):''; };
 function storePrices(name){
   const by={}; for(const p of live('shopPrices').filter(x=>x.store===name)){ const k=p.name; if(!by[k]||p.date>by[k].date||(p.date===by[k].date&&(p.updatedAt||0)>(by[k].updatedAt||0))) by[k]=p; }
   return Object.values(by).sort((a,b)=>a.name.localeCompare(b.name,'ru'));
@@ -1786,7 +1789,7 @@ function viewStores(){
     </div>`; }).join('');
   return `<section class="section"><div class="section-head"><h2>Магазины</h2><span class="hint">адрес и цены</span></div>
     ${canPhoto?'<p class="hint" style="margin:0 0 8px">Нажмите «📷 Фото цен» у нужного магазина и сфотографируйте ценники — цены запишутся в этот магазин. Фото не сохраняется.</p>':''}
-    <p class="hint" style="margin:0 0 8px">«🏷️ Буклет акций» открывает свежие акции недели этого магазина (сайт visasakcijas.lv).</p>
+    <p class="hint" style="margin:0 0 8px">«🏷️ Буклет акций» открывает свежие акции недели этого магазина (visasakcijas.lv, у ABrands — их сайт).</p>
     <div class="stores">${cards}</div></section>
   <section class="section"><div class="section-head"><h2>Добавить магазин</h2></div><div class="card">
     <div class="form-grid"><label class="f">Название<input id="st-new-name" placeholder="например, Rimi Jaunbūve"></label>
