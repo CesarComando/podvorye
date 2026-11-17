@@ -43,6 +43,13 @@ export async function signUp(login, password) {
   if (!data.session) throw new Error('Аккаунт создан. Нажмите «Войти».')
 }
 export async function signOut() { await sb.auth.signOut() }
+export async function changePassword(password) {
+  const { error } = await sb.auth.updateUser({ password })
+  if (error) {
+    if (/different from the old/i.test(error.message || '')) throw new Error('Новый пароль совпадает со старым — придумайте другой.')
+    throw new Error(ruAuth(error))
+  }
+}
 export async function markTourDone() { try { await sb.auth.updateUser({ data: { tour_done: true } }) } catch {} }
 
 // ---------- хозяйство ----------

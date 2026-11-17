@@ -3,7 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { micBtn } from './voice.js'
 import { showInstall } from './install.js'
 import { initTour, startTour } from './tour.js'
-import { getSession, onAuth, signIn, signUp, signOut, myFarm, joinFarm, createInvite, listMembers, removeMember,
+import { getSession, onAuth, signIn, signUp, signOut, changePassword, myFarm, joinFarm, createInvite, listMembers, removeMember,
   fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
 
 // Новая версия приложения ставится сама; проверяем при открытии и при возвращении в приложение.
@@ -323,12 +323,15 @@ async function initStore(){
     }
   }catch(e){}
   render(); checkReminders();
+  if(session) keepLogin();
   if(session) connect();
   if(!ui.task) startTour();
   onAuth(s=>{ const was=!!session; session=s; if(s&&!was) connect(); });
   window.addEventListener('online',()=>{ if(session&&!farm) connect(); else if(dirty) flush(); });
   window.addEventListener('offline',()=>setSync('local','Нет связи — сохраняю в телефоне'));
 }
+// Просим браузер хранить данные приложения постоянно — чтобы он сам не стёр вход при нехватке места.
+function keepLogin(){ try{ navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{}); }catch(e){} }
 async function doSignOut(){
   try{ await signOut(); }catch(e){}
   if(unsub) unsub(); unsub=null; session=null; farm=null; aiEnabled=false;
@@ -434,7 +437,7 @@ async function authGo(){
   const em=(document.getElementById('au-email').value||'').trim(), pw=document.getElementById('au-pw').value||'';
   ui.auEmail=em; if(!em||!pw){ authErr='Впишите логин и пароль.'; render(); return; }
   authBusy=true; authErr=''; render();
-  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); try{ localStorage.setItem('miglani-last-login',em); }catch(e){} session=await getSession(); await connect(); startTour(); }
+  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); try{ localStorage.setItem('miglani-last-login',em); }catch(e){} keepLogin(); session=await getSession(); await connect(); startTour(); }
   catch(e){ authErr=e.message||String(e); }
   authBusy=false; render();
 }
@@ -454,7 +457,14 @@ function viewTeam(){
         <p class="hint" style="margin:6px 0 0">Данные на этом телефоне заменятся данными хозяйства, к которому вы присоединяетесь.</p>
       </details>
       ${farm&&!aiEnabled?'<p class="hint" style="margin:0">Помощник Claude и фото для этого хозяйства пока не включены — их включает владелец приложения.</p>':''}
+      ${ui.pwForm?`<div class="builder"><strong>Новый пароль</strong>
+        <span class="row nowrap"><input type="${ui.pwShow?'text':'password'}" id="new-pw" autocomplete="new-password" placeholder="не короче 6 символов" style="flex:1;min-width:0"><button type="button" class="ghost" data-act="pw-show">${ui.pwShow?'Скрыть':'Показать'}</button></span>
+        ${ui.pwMsg?`<div class="notice">${esc(ui.pwMsg)}</div>`:''}
+        <div class="row"><button class="primary" data-act="pw-save" ${ui.pwBusy?'disabled':''}>${ui.pwBusy?'Минутку…':'Сохранить пароль'}</button><button data-act="pw-cancel">Отмена</button></div>
+        <p class="hint" style="margin:0">Запомните или запишите его: с ним можно войти на другом телефоне или в другом браузере.</p></div>`
+        :(ui.pwDone?'<div class="notice">Пароль сменён ✓</div>':'')}
       <div class="row"><span class="hint">Вы вошли как ${esc(shownLogin(me.email))}</span>
+        ${ui.pwForm?'':'<button class="ghost" data-act="pw-open">Сменить пароль</button>'}
         ${ui.confirmOut?`<span class="hint">${dirty?'Есть не отправленные изменения — они пропадут. ':''}Выйти?</span><button class="danger" data-act="sign-out-yes">Выйти</button><button data-act="sign-out-no">Отмена</button>`:'<button class="ghost" data-act="sign-out">Выйти из аккаунта</button>'}</div>
     </div></section>`;
 }
@@ -1452,34 +1462,45 @@ function billPaid(id, amt){
 // ---- Учёт ----
 const CATS_OUT=['Корм','Ветеринар','Дрова','Коммуналка','Топливо','Ремонт','Продукты','Связь','Кредит','Налоги','Одежда','Прочее'];
 const CATS_IN=['Продажа молока','Продажа яиц','Продажа молодняка','Зарплата','Подарок','Прочее'];
+// Разделы учёта денег — отдельно от разделов дел: куры, остальное хозяйство, машина, дом (в т.ч. дрова), личное.
+const MSECS={hens:'Куры', farm:'Хозяйство', car:'Машина', home:'Дом', me:'Личное'};
+// Старые записи: топливо → «Машина», продажа яиц и всё про кур → «Куры».
+const moneySec=(m)=>{ if(m.sec&&MSECS[m.sec]&&m.sec!=='farm'&&m.sec!=='me') return m.sec;
+  if(/топлив|бензин|дизел/i.test(m.cat||'')) return 'car';
+  if(m.sec==='farm'&&/яйц|яиц|кур|цыпл|несушк/i.test((m.cat||'')+' '+(m.note||''))) return 'hens';
+  return MSECS[m.sec]?m.sec:'home'; };
 const catsFor=(type)=>[...new Set([...(type==='in'?CATS_IN:CATS_OUT), ...((S&&S.settings.moneyCats&&S.settings.moneyCats[type])||[]), ...live('money').filter(m=>m.type===type).map(m=>m.cat)])].filter(Boolean);
 function viewMoney(){
   const ym=ui.ym||todayISO().slice(0,7), list=live('money').filter(m=>m.date&&m.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date));
   const inc=list.filter(m=>m.type==='in').reduce((s,m)=>s+(+m.amount||0),0), out=list.filter(m=>m.type==='out').reduce((s,m)=>s+(+m.amount||0),0);
-  const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ bySec[m.sec]=(bySec[m.sec]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
-  const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(SECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
+  const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ const k=moneySec(m); bySec[k]=(bySec[k]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
+  const per={}; for(const m of list){ const k=moneySec(m); per[k]=per[k]||{inc:0,out:0}; per[k][m.type==='in'?'inc':'out']+=(+m.amount||0); }
+  const perRows=Object.keys(MSECS).filter(k=>per[k]).map(k=>{ const v=per[k], d=v.inc-v.out; return `<tr><td><strong>${MSECS[k]}</strong></td><td class="n" style="color:var(--ok)">${v.inc?'+'+money(v.inc):'—'}</td><td class="n">${v.out?'−'+money(v.out):'—'}</td><td class="n" style="font-weight:700;color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td></tr>`; }).join('');
+  const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(MSECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
   const mt=ui.mType||'out';
   return `<section class="section"><div class="day-nav"><button class="ghost big-btn" data-act="ym" data-n="-1" aria-label="Прошлый месяц">‹</button><span class="day-title" style="text-transform:none">${monthName(ym)}</span><button class="ghost big-btn" data-act="ym" data-n="1" aria-label="Следующий месяц">›</button></div>
     <div class="summary"><div class="stat"><span class="k">Доходы</span><span class="v" style="color:var(--ok)">${money(inc)}</span></div>
       <div class="stat"><span class="k">Расходы</span><span class="v">${money(out)}</span></div>
       <div class="stat"><span class="k">Разница</span><span class="v" style="color:${inc-out>=0?'var(--ok)':'var(--bad)'}">${inc-out>=0?'+':''}${money(inc-out)}</span></div></div></section>
+  ${perRows?`<section class="section"><div class="section-head"><h2>Итог по разделам</h2><span class="hint">каждый раздел отдельно</span></div><div class="card"><div class="tbl-wrap"><table class="msec"><thead><tr><th></th><th class="n">Доход</th><th class="n">Расход</th><th class="n">Итог</th></tr></thead><tbody>${perRows}</tbody></table></div>
+    <p class="hint" style="margin:6px 0 0">Заправки идут в «Машину», дрова — в «Дом». Чтобы корм для кур считался в «Куры», при записи выберите раздел «Куры».</p></div></section>`:''}
   <section class="section"><div class="section-head"><h2>Записать</h2></div><div class="card">
     <div class="seg"><button data-act="m-type" data-t="out" aria-pressed="${mt==='out'}">Расход</button><button data-act="m-type" data-t="in" aria-pressed="${mt==='in'}">Доход</button></div>
     <div class="form-grid">
       <label class="f">Сумма, €<input id="mn-amt" inputmode="decimal" placeholder="0"></label>
       <label class="f">Категория<input id="mn-cat" list="mn-cats" placeholder="${mt==='in'?'Продажа яиц':'Корм'}"></label>
-      <label class="f">Раздел<select id="mn-sec">${Object.entries(SECS).map(([k,l])=>`<option value="${k}" ${k==='home'?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Раздел<select id="mn-sec">${Object.entries(MSECS).map(([k,l])=>`<option value="${k}" ${k===(ui.mSec||'home')?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f">Дата<input type="date" id="mn-date" value="${ym===todayISO().slice(0,7)?todayISO():ym+'-01'}"></label>
     </div><datalist id="mn-cats">${catsFor(mt).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
     <label class="f">Заметка<input id="mn-note" placeholder="необязательно"></label>
     <div class="row"><button class="primary" data-act="m-add">Записать</button></div></div></section>
   ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
   <section class="section"><div class="section-head"><h2>Записи за месяц</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
-    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(SECS[m.sec]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
+    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
 }
 function moneyCSV(){
   const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
-  for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), SECS[m.sec]||m.sec, m.cat, m.note||'']);
+  for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), MSECS[moneySec(m)]||m.sec, m.cat, m.note||'']);
   return '﻿'+rows.map(r=>r.map(v=>/[;"\n]/.test(String(v))?'"'+String(v).replace(/"/g,'""')+'"':v).join(';')).join('\r\n');
 }
 
@@ -1536,8 +1557,23 @@ function viewCar(){
     <p class="hint" style="margin:0">Достаточно двух из трёх: литры, сумма, цена — третье посчитается.</p>
     <div class="row"><button class="primary" data-act="fuel-add">Записать заправку</button></div></div></section>
   ${s.stations.length>1?`<section class="section"><div class="section-head"><h2>Где дешевле</h2><span class="hint">по вашим заправкам</span></div><div class="card"><div class="tbl-wrap"><table><tbody>${s.stations.map(x=>`<tr><td>${esc(x.n)}</td><td class="n">${money(x.avg)}/л</td><td class="n">${x.cnt} раз</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
-  ${Object.keys(s.byMonth).length?`<section class="section"><div class="section-head"><h2>По месяцам</h2></div><div class="card"><div class="tbl-wrap"><table><tbody>${Object.entries(s.byMonth).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12).map(([k,v])=>`<tr><td>${monthName(k)}</td><td class="n">${fmt(v.l,1)} л</td><td class="n">${money(v.sum)}</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
+  ${Object.keys(s.byMonth).length?fuelMonths(s):''}
   <div class="row"><button class="ghost" data-act="car-edit" data-c="${c.id}">Сроки и данные машины</button><button class="ghost" data-act="car-edit" data-c="new">+ ещё машина</button></div>`;
+}
+// Заправки по месяцам: нажал на месяц — видно каждую заправку по дням, итог месяца в конце; внизу — итог за все месяцы.
+function fuelMonths(s){
+  if(!ui.fuelOpen) ui.fuelOpen={[todayISO().slice(0,7)]:true};
+  const months=Object.entries(s.byMonth).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
+  const tot=months.reduce((a,[,v])=>({l:a.l+v.l,sum:a.sum+v.sum}),{l:0,sum:0});
+  const rows=months.map(([k,v])=>{
+    const open=!!ui.fuelOpen[k];
+    const days=open?s.fills.filter(f=>f.date.slice(0,7)===k).sort((a,b)=>a.date.localeCompare(b.date)||(+a.odo||0)-(+b.odo||0)):[];
+    return `<tr class="fm-row"><td colspan="3"><button class="fm-btn" data-act="fuel-month" data-m="${k}" aria-expanded="${open}"><span class="fm-arrow">${open?'▾':'▸'}</span><span class="fm-name">${monthName(k)}</span><span class="fm-l">${fmt(v.l,1)} л</span><span class="fm-sum">${money(v.sum)}</span></button></td></tr>`+
+      (open?days.map(f=>`<tr class="fm-day"><td>${shortDate(f.date)}${f.station?`<span class="small">${esc(f.station)}</span>`:''}</td><td class="n">${fmt(+f.liters||0,1)} л</td><td class="n">${money(+f.sum||0)}</td></tr>`).join('')+
+        `<tr class="fm-total"><td>Итого за месяц</td><td class="n">${fmt(v.l,1)} л</td><td class="n">${money(v.sum)}</td></tr>`:'');
+  }).join('');
+  return `<section class="section"><div class="section-head"><h2>Заправки по месяцам</h2><span class="hint">нажмите на месяц</span></div><div class="card"><div class="tbl-wrap"><table class="fuel-months"><tbody>${rows}
+    <tr class="fm-grand"><td>Всего${months.length>1?` за ${months.length} мес.`:''}</td><td class="n">${fmt(tot.l,1)} л</td><td class="n">${money(tot.sum)}</td></tr></tbody></table></div></div></section>`;
 }
 function carForm(c){
   c=c||{name:'',plate:'',fuel:'95',inspection:'',octa:'',kasko:'',serviceKm:15000,serviceMonths:12,lastServiceKm:'',lastServiceDate:''};
@@ -2022,6 +2058,7 @@ document.addEventListener('click',e=>{
   if(act==='ym'){ const d=new Date((ui.ym||todayISO().slice(0,7))+'-15T12:00:00'); d.setMonth(d.getMonth()+ +t.dataset.n); ui.ym=isoOf(d).slice(0,7); render(); return; }
   if(act==='m-type'){ ui.mType=t.dataset.t; render(); return; }
   if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
+    ui.mSec=g('sec').value;
     addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
   if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
   if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
@@ -2036,6 +2073,7 @@ document.addEventListener('click',e=>{
     if(t.dataset.c==='new'){ const c=touch(Object.assign({id:uid()},p)); S.cars.push(c); ui.car=c.id; } else touch(Object.assign(live('cars').find(x=>x.id===t.dataset.c)||{},p));
     ui.carEdit=null; save(); render(); return; }
   if(act==='car-del'){ const c=live('cars').find(x=>x.id===t.dataset.c); if(c){ c.deleted=true; touch(c); } ui.carEdit=null; ui.car=null; save(); render(); return; }
+  if(act==='fuel-month'){ const k=t.dataset.m; ui.fuelOpen=ui.fuelOpen||{}; ui.fuelOpen[k]=!ui.fuelOpen[k]; render(); return; }
   if(act==='fuel-add'){ const g=(k)=>document.getElementById('fu-'+k); let l=num(g('l').value), s=num(g('s').value), p=num(g('p').value);
     if(!l&&s&&p) l=s/p; if(!s&&l&&p) s=l*p; if(!p&&l&&s) p=s/l;
     if(!(l>0&&s>0)){ flash('Впишите два из трёх: литры, сумму или цену за литр.'); return; }
@@ -2043,7 +2081,7 @@ document.addEventListener('click',e=>{
     if(odo&&st.odo&&odo<st.odo&&!ui.odoOk){ ui.odoOk=true; flash(`Пробег ${fmt(odo,0)} меньше прошлого (${fmt(st.odo,0)}). Проверьте одометр; если всё верно — нажмите «Записать» ещё раз.`); return; }
     ui.odoOk=false;
     const f=touch({id:uid(), car:c.id, date:g('d').value||todayISO(), liters:Math.round(l*100)/100, sum:r2(s), price:Math.round(p*1000)/1000, odo:odo||'', full:g('full').checked, station:g('st').value.trim(), sec:'me'});
-    S.fuel.push(f); addMoney({type:'out', amount:f.sum, sec:'me', cat:'Топливо', note:`${c.name}: ${fmt(f.liters,1)} л${f.station?' · '+f.station:''}`, date:f.date});
+    S.fuel.push(f); addMoney({type:'out', amount:f.sum, sec:'car', cat:'Топливо', note:`${c.name}: ${fmt(f.liters,1)} л${f.station?' · '+f.station:''}`, date:f.date});
     ui.fuelDraft=null; save(); flash(`Заправка записана: ${fmt(f.liters,1)} л, ${money(f.sum)} — и в «Учёт».`); return; }
   // покупки
   if(act==='shop-list'){ ui.shopList=t.dataset.l; render(); return; }
@@ -2079,6 +2117,16 @@ document.addEventListener('click',e=>{
   if(act==='auth-show'){ const pw=document.getElementById('au-pw'), em=document.getElementById('au-email'); const v=pw?pw.value:''; if(em) ui.auEmail=em.value; ui.auShow=!ui.auShow; render(); const p2=document.getElementById('au-pw'); if(p2){ p2.value=v; p2.focus(); } return; }
   if(act==='auth-switch'){ const el=document.getElementById('au-email'); if(el) ui.auEmail=el.value; ui.authMode=ui.authMode==='up'?'in':'up'; authErr=''; render(); return; }
   if(act==='sign-out'){ ui.confirmOut=true; render(); return; }
+  if(act==='pw-open'){ ui.pwForm=true; ui.pwMsg=''; ui.pwDone=false; render(); setTimeout(()=>{ const el=document.getElementById('new-pw'); if(el) el.focus(); },40); return; }
+  if(act==='pw-cancel'){ ui.pwForm=false; ui.pwMsg=''; render(); return; }
+  if(act==='pw-show'){ const el=document.getElementById('new-pw'), v=el?el.value:''; ui.pwShow=!ui.pwShow; ui.pwMsg=''; render(); const e2=document.getElementById('new-pw'); if(e2){ e2.value=v; e2.focus(); } return; }
+  if(act==='pw-save'){ const el=document.getElementById('new-pw'), v=el?el.value:'';
+    if(v.length<6){ ui.pwMsg='Пароль — не короче 6 символов.'; render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; return; }
+    if(!navigator.onLine){ ui.pwMsg='Нужен интернет, чтобы сменить пароль.'; render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; return; }
+    ui.pwBusy=true; ui.pwMsg=''; render();
+    changePassword(v).then(()=>{ ui.pwBusy=false; ui.pwForm=false; ui.pwDone=true; ui.pwShow=false; render(); })
+      .catch(e=>{ ui.pwBusy=false; ui.pwMsg=e.message||String(e); render(); const e2=document.getElementById('new-pw'); if(e2) e2.value=v; });
+    return; }
   if(act==='sign-out-no'){ ui.confirmOut=false; render(); return; }
   if(act==='sign-out-yes'){ ui.confirmOut=false; doSignOut(); return; }
   if(act==='make-invite'){ if(!farm) return; t.disabled=true; createInvite(farm.id).then(c=>{ ui.invite=c; render(); }).catch(()=>{ note='Не получилось создать код — проверьте интернет.'; render(); }); return; }
