@@ -246,3 +246,4 @@ body.touring .install-bar{display:none}
 .store-card{display:flex;flex-direction:column;gap:8px}
 .price-row input[type=checkbox]{width:22px;height:22px;flex:0 0 auto}
 .price-row .num{flex:0 0 88px;width:88px;min-width:0;text-align:right}
+td.nowrap{white-space:nowrap}
