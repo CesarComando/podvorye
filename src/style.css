@@ -208,3 +208,21 @@ details[open] summary{margin-bottom:10px}
 .install-in span{flex:1 1 200px}
 .install-in .btn{display:inline-block;text-decoration:none;padding:10px 14px;border-radius:10px;background:#3A8A3C;color:#fff;font-weight:600}
 .install-x{flex:none}
+
+/* ---------- Кнопка «?» и подсказка-инструкция ---------- */
+header.top .help-btn{position:absolute;top:52px;right:10px;z-index:1;width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;
+  font-family:var(--font-display);font-weight:700;font-size:18px;background:var(--surface);color:var(--accent);border:2px solid var(--accent);box-shadow:0 1px 4px rgba(60,60,20,.15)}
+.tour{position:fixed;inset:0;z-index:80}
+body.touring .install-bar{display:none}
+.tour-shade{position:absolute;inset:0;background:rgba(20,30,15,.55)}
+.tour-shade.clear{background:transparent}
+.tour-spot{position:fixed;border-radius:14px;box-shadow:0 0 0 9999px rgba(20,30,15,.55);outline:3px solid var(--wheat);pointer-events:none;transition:all .2s ease}
+.tour-card{position:fixed;left:50%;transform:translateX(-50%);top:50%;width:min(360px,calc(100vw - 24px));background:var(--surface);color:var(--ink);
+  border-radius:16px;border-top:4px solid var(--wheat);padding:16px 16px 14px;box-shadow:0 8px 28px rgba(20,30,10,.35);font-size:16px;line-height:1.45}
+.tour-shade:not(.clear) ~ .tour-card{top:50%;transform:translate(-50%,-50%)}
+.tour-card p{margin:0 0 10px}
+.tour-title{font-family:var(--font-display);font-weight:600;font-size:18px}
+.tour-step{font-size:13px;color:var(--muted);margin-bottom:4px!important}
+.tour-btns{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:4px}
+.tour-btns button{min-height:44px;font-size:16px;padding:8px 16px}
+.tour-x{position:absolute;top:8px;right:8px;min-height:36px;width:36px;padding:0;border:none;background:transparent;font-size:18px;color:var(--muted)}
