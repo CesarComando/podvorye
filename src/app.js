@@ -1122,7 +1122,7 @@ async function photoRun(){
       if(p.mode==='bill'){ const x=p.res; ui.bill='new'; ui.billDraft={to:s(x.to), what:s(x.what), amount:n2(x.amount), due:/^\d{4}-\d\d-\d\d$/.test(s(x.due))?x.due:todayISO(), iban:s(x.iban).replace(/\s+/g,''), ref:s(x.ref), note:s(x.note), rep:'month', sec:'home', varies:!n2(x.amount)};
         p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='bills'; render(); return; }
       if(p.mode==='fuel'){ const x=p.res; ui.fuelDraft={liters:n2(x.liters), sum:n2(x.sum), price:n2(x.price), station:s(x.station), date:/^\d{4}-\d\d-\d\d$/.test(s(x.date))?x.date:todayISO()};
-        p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='car'; render(); flash('Проверьте цифры с чека, впишите пробег и нажмите «Записать заправку».'); return; }
+        p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='car'; render(); flash('Проверьте цифры с чека и нажмите «Записать заправку». Пробег — по желанию.'); return; }
       if(p.mode==='prices'){ const arr=Array.isArray(p.res.items)?p.res.items:[];
         p.items=arr.map(x=>({name:s(x.name).trim()||s(x.full).trim(), full:s(x.full).trim(), price:n2(x.price), unit:s(x.unit_price), discount:!!x.discount, on:true})).filter(x=>x.name&&x.price);
         p.busy=false; render(); return; }
@@ -1579,12 +1579,15 @@ function moneyCSV(){
 const FUELS={'95':'Бензин 95','98':'Бензин 98',diesel:'Дизель',lpg:'Газ (LPG)'};
 const r2=(x)=>Math.round((+x||0)*100)/100;                 // деньги — ровно до цента
 function carStats(car){
-  const fills=live('fuel').filter(f=>f.car===car.id).sort((a,b)=>(+a.odo||0)-(+b.odo||0)||a.date.localeCompare(b.date));
+  // пробег необязателен: все заправки — для денег и литров; расход и цену километра считаем только по тем, где вписан пробег
+  const fills=live('fuel').filter(f=>f.car===car.id).sort((a,b)=>a.date.localeCompare(b.date)||(+a.odo||0)-(+b.odo||0));
+  const odoFills=fills.filter(f=>+f.odo>0).sort((a,b)=>(+a.odo)-(+b.odo)||a.date.localeCompare(b.date));
   const segs=[]; let lastFull=null, acc=0;
-  for(const f of fills){ if(lastFull){ acc+=+f.liters||0; if(f.full&&+f.odo>+lastFull.odo){ segs.push({l:acc, km:+f.odo-+lastFull.odo, to:f}); acc=0; lastFull=f; } } else if(f.full){ lastFull=f; acc=0; } }
+  // от полного бака с пробегом до следующего такого же; литры заправок без пробега между ними тоже входят
+  for(const f of fills){ if(lastFull){ acc+=+f.liters||0; if(f.full&&+f.odo>+lastFull.odo){ segs.push({l:acc, km:+f.odo-+lastFull.odo, to:f}); acc=0; lastFull=f; } } else if(f.full&&+f.odo>0){ lastFull=f; acc=0; } }
   const segL=segs.reduce((s,x)=>s+x.l,0), segKm=segs.reduce((s,x)=>s+x.km,0);
-  const odoMin=fills.length?+fills[0].odo||0:0, odoMax=fills.length?+fills[fills.length-1].odo||0:0, km=odoMax-odoMin;
-  const sumAfterFirst=fills.slice(1).reduce((s,f)=>s+(+f.sum||0),0);
+  const odoMin=odoFills.length?+odoFills[0].odo:0, odoMax=odoFills.length?+odoFills[odoFills.length-1].odo:0, km=odoMax-odoMin;
+  const sumAfterFirst=odoFills.length?fills.filter(f=>f.date>=odoFills[0].date&&f!==odoFills[0]&&f.date<=odoFills[odoFills.length-1].date).reduce((s,f)=>s+(+f.sum||0),0):0;
   const byMonth={}; for(const f of fills){ const ym=f.date.slice(0,7); byMonth[ym]=byMonth[ym]||{sum:0,l:0}; byMonth[ym].sum+=+f.sum||0; byMonth[ym].l+=+f.liters||0; }
   const st={}; for(const f of fills) if(f.station&&+f.price){ (st[f.station]=st[f.station]||[]).push(+f.price); }
   const stations=Object.entries(st).map(([n,p])=>({n,avg:p.reduce((s,x)=>s+x,0)/p.length,cnt:p.length})).sort((a,b)=>a.avg-b.avg);
@@ -1620,12 +1623,12 @@ function viewCar(){
       <label class="f">Литров<input id="fu-l" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.liters||'')}"></label>
       <label class="f">Сумма, €<input id="fu-s" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.sum||'')}"></label>
       <label class="f">Цена за литр, €<input id="fu-p" inputmode="decimal" value="${esc(ui.fuelDraft&&ui.fuelDraft.price||'')}"></label>
-      <label class="f">Пробег, км<input id="fu-o" inputmode="numeric" placeholder="${last?'было '+fmt(+last.odo,0):'по одометру'}"></label>
+      <label class="f">Пробег, км — можно не писать<input id="fu-o" inputmode="numeric" placeholder="${s.odo?'было '+fmt(s.odo,0):'по одометру'}"></label>
       <label class="f">Заправка<input id="fu-st" list="fu-sts" value="${esc(ui.fuelDraft&&ui.fuelDraft.station||last&&last.station||'')}" placeholder="Circle K, Neste, Viada, Virši…"></label>
       <label class="f">Дата<input type="date" id="fu-d" value="${esc(ui.fuelDraft&&ui.fuelDraft.date||todayISO())}"></label>
     </div><datalist id="fu-sts">${[...new Set(['Circle K','Neste','Viada','Virši',...live('fuel').map(f=>f.station).filter(Boolean)])].map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
     <label class="row" style="font-size:15px"><input type="checkbox" id="fu-full" checked> Полный бак</label>
-    <p class="hint" style="margin:0">Достаточно двух из трёх: литры, сумма, цена — третье посчитается.</p>
+    <p class="hint" style="margin:0">Достаточно двух из трёх: литры, сумма, цена — третье посчитается. Пробег — по желанию: без него заправка и сумма всё равно запишутся, а с ним приложение посчитает расход на 100 км и цену километра.</p>
     <div class="row"><button class="primary" data-act="fuel-add">Записать заправку</button></div></div></section>
   ${s.stations.length>1?`<section class="section"><div class="section-head"><h2>Где дешевле</h2><span class="hint">по вашим заправкам</span></div><div class="card"><div class="tbl-wrap"><table><tbody>${s.stations.map(x=>`<tr><td>${esc(x.n)}</td><td class="n">${money(x.avg)}/л</td><td class="n">${x.cnt} раз</td></tr>`).join('')}</tbody></table></div></div></section>`:''}
   ${Object.keys(s.byMonth).length?fuelMonths(s):''}
