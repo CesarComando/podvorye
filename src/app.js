@@ -1462,34 +1462,45 @@ function billPaid(id, amt){
 // ---- Учёт ----
 const CATS_OUT=['Корм','Ветеринар','Дрова','Коммуналка','Топливо','Ремонт','Продукты','Связь','Кредит','Налоги','Одежда','Прочее'];
 const CATS_IN=['Продажа молока','Продажа яиц','Продажа молодняка','Зарплата','Подарок','Прочее'];
+// Разделы учёта денег — отдельно от разделов дел: куры, остальное хозяйство, машина, дом (в т.ч. дрова), личное.
+const MSECS={hens:'Куры', farm:'Хозяйство', car:'Машина', home:'Дом', me:'Личное'};
+// Старые записи: топливо → «Машина», продажа яиц и всё про кур → «Куры».
+const moneySec=(m)=>{ if(m.sec&&MSECS[m.sec]&&m.sec!=='farm'&&m.sec!=='me') return m.sec;
+  if(/топлив|бензин|дизел/i.test(m.cat||'')) return 'car';
+  if(m.sec==='farm'&&/яйц|яиц|кур|цыпл|несушк/i.test((m.cat||'')+' '+(m.note||''))) return 'hens';
+  return MSECS[m.sec]?m.sec:'home'; };
 const catsFor=(type)=>[...new Set([...(type==='in'?CATS_IN:CATS_OUT), ...((S&&S.settings.moneyCats&&S.settings.moneyCats[type])||[]), ...live('money').filter(m=>m.type===type).map(m=>m.cat)])].filter(Boolean);
 function viewMoney(){
   const ym=ui.ym||todayISO().slice(0,7), list=live('money').filter(m=>m.date&&m.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date));
   const inc=list.filter(m=>m.type==='in').reduce((s,m)=>s+(+m.amount||0),0), out=list.filter(m=>m.type==='out').reduce((s,m)=>s+(+m.amount||0),0);
-  const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ bySec[m.sec]=(bySec[m.sec]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
-  const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(SECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
+  const bySec={}, byCat={}; for(const m of list.filter(m=>m.type==='out')){ const k=moneySec(m); bySec[k]=(bySec[k]||0)+(+m.amount||0); byCat[m.cat]=(byCat[m.cat]||0)+(+m.amount||0); }
+  const per={}; for(const m of list){ const k=moneySec(m); per[k]=per[k]||{inc:0,out:0}; per[k][m.type==='in'?'inc':'out']+=(+m.amount||0); }
+  const perRows=Object.keys(MSECS).filter(k=>per[k]).map(k=>{ const v=per[k], d=v.inc-v.out; return `<tr><td><strong>${MSECS[k]}</strong></td><td class="n" style="color:var(--ok)">${v.inc?'+'+money(v.inc):'—'}</td><td class="n">${v.out?'−'+money(v.out):'—'}</td><td class="n" style="font-weight:700;color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td></tr>`; }).join('');
+  const bars=(o)=>Object.entries(o).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(MSECS[k]||k)}</span><span class="val">${money(v)} · ${fmt(out?v/out*100:0,0)}%</span><div class="bar"><b style="width:${out?v/out*100:0}%"></b></div></div>`).join('');
   const mt=ui.mType||'out';
   return `<section class="section"><div class="day-nav"><button class="ghost big-btn" data-act="ym" data-n="-1" aria-label="Прошлый месяц">‹</button><span class="day-title" style="text-transform:none">${monthName(ym)}</span><button class="ghost big-btn" data-act="ym" data-n="1" aria-label="Следующий месяц">›</button></div>
     <div class="summary"><div class="stat"><span class="k">Доходы</span><span class="v" style="color:var(--ok)">${money(inc)}</span></div>
       <div class="stat"><span class="k">Расходы</span><span class="v">${money(out)}</span></div>
       <div class="stat"><span class="k">Разница</span><span class="v" style="color:${inc-out>=0?'var(--ok)':'var(--bad)'}">${inc-out>=0?'+':''}${money(inc-out)}</span></div></div></section>
+  ${perRows?`<section class="section"><div class="section-head"><h2>Итог по разделам</h2><span class="hint">каждый раздел отдельно</span></div><div class="card"><div class="tbl-wrap"><table class="msec"><thead><tr><th></th><th class="n">Доход</th><th class="n">Расход</th><th class="n">Итог</th></tr></thead><tbody>${perRows}</tbody></table></div>
+    <p class="hint" style="margin:6px 0 0">Заправки идут в «Машину», дрова — в «Дом». Чтобы корм для кур считался в «Куры», при записи выберите раздел «Куры».</p></div></section>`:''}
   <section class="section"><div class="section-head"><h2>Записать</h2></div><div class="card">
     <div class="seg"><button data-act="m-type" data-t="out" aria-pressed="${mt==='out'}">Расход</button><button data-act="m-type" data-t="in" aria-pressed="${mt==='in'}">Доход</button></div>
     <div class="form-grid">
       <label class="f">Сумма, €<input id="mn-amt" inputmode="decimal" placeholder="0"></label>
       <label class="f">Категория<input id="mn-cat" list="mn-cats" placeholder="${mt==='in'?'Продажа яиц':'Корм'}"></label>
-      <label class="f">Раздел<select id="mn-sec">${Object.entries(SECS).map(([k,l])=>`<option value="${k}" ${k==='home'?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Раздел<select id="mn-sec">${Object.entries(MSECS).map(([k,l])=>`<option value="${k}" ${k===(ui.mSec||'home')?'selected':''}>${l}</option>`).join('')}</select></label>
       <label class="f">Дата<input type="date" id="mn-date" value="${ym===todayISO().slice(0,7)?todayISO():ym+'-01'}"></label>
     </div><datalist id="mn-cats">${catsFor(mt).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
     <label class="f">Заметка<input id="mn-note" placeholder="необязательно"></label>
     <div class="row"><button class="primary" data-act="m-add">Записать</button></div></div></section>
   ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
   <section class="section"><div class="section-head"><h2>Записи за месяц</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
-    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(SECS[m.sec]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
+    ${list.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${list.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}</tbody></table></div></div>`:'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>'}</section>`;
 }
 function moneyCSV(){
   const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
-  for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), SECS[m.sec]||m.sec, m.cat, m.note||'']);
+  for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), MSECS[moneySec(m)]||m.sec, m.cat, m.note||'']);
   return '﻿'+rows.map(r=>r.map(v=>/[;"\n]/.test(String(v))?'"'+String(v).replace(/"/g,'""')+'"':v).join(';')).join('\r\n');
 }
 
@@ -2047,6 +2058,7 @@ document.addEventListener('click',e=>{
   if(act==='ym'){ const d=new Date((ui.ym||todayISO().slice(0,7))+'-15T12:00:00'); d.setMonth(d.getMonth()+ +t.dataset.n); ui.ym=isoOf(d).slice(0,7); render(); return; }
   if(act==='m-type'){ ui.mType=t.dataset.t; render(); return; }
   if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
+    ui.mSec=g('sec').value;
     addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
   if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
   if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
@@ -2069,7 +2081,7 @@ document.addEventListener('click',e=>{
     if(odo&&st.odo&&odo<st.odo&&!ui.odoOk){ ui.odoOk=true; flash(`Пробег ${fmt(odo,0)} меньше прошлого (${fmt(st.odo,0)}). Проверьте одометр; если всё верно — нажмите «Записать» ещё раз.`); return; }
     ui.odoOk=false;
     const f=touch({id:uid(), car:c.id, date:g('d').value||todayISO(), liters:Math.round(l*100)/100, sum:r2(s), price:Math.round(p*1000)/1000, odo:odo||'', full:g('full').checked, station:g('st').value.trim(), sec:'me'});
-    S.fuel.push(f); addMoney({type:'out', amount:f.sum, sec:'me', cat:'Топливо', note:`${c.name}: ${fmt(f.liters,1)} л${f.station?' · '+f.station:''}`, date:f.date});
+    S.fuel.push(f); addMoney({type:'out', amount:f.sum, sec:'car', cat:'Топливо', note:`${c.name}: ${fmt(f.liters,1)} л${f.station?' · '+f.station:''}`, date:f.date});
     ui.fuelDraft=null; save(); flash(`Заправка записана: ${fmt(f.liters,1)} л, ${money(f.sum)} — и в «Учёт».`); return; }
   // покупки
   if(act==='shop-list'){ ui.shopList=t.dataset.l; render(); return; }
