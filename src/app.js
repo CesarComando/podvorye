@@ -477,7 +477,7 @@ function viewTeam(){
 function fabs(){
   if(!SAMPLE||(farm&&!aiEnabled)||ui.photo||(ui.chat&&ui.chat.open)||ui.feed) return '';
   return `<div class="fabs">
-    ${SAMPLE_IMG?`<button class="fab alt" data-act="photo-open" aria-label="Фото: весы, кувшин, склад"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>`:''}
+    ${SAMPLE_IMG?`<button class="fab alt" data-act="photo-open" aria-label="Фото: весы, кувшин, чеки, склад"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>`:''}
     <button class="fab" data-act="chat-open" aria-label="Спросить помощника"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg></button>
   </div>`;
 }
@@ -2456,7 +2456,7 @@ render();
 initTour({
   ready: ()=>loaded&&!authView&&(!!session||(import.meta.env.DEV&&location.hash.startsWith('#demo'))), // #demo — только для проверки при разработке
   getSession: ()=>session,
-  show: (tab)=>{ if(ui.tab!==tab||ui.task||ui.bill||ui.feed||ui.photo||(ui.chat&&ui.chat.open)){ ui.tab=tab; ui.task=null; ui.bill=null; ui.feed=null; ui.photo=null; if(ui.chat) ui.chat.open=false; render(); } }
+  show: (to)=>{ const [tab,sub]=String(to).split(':'); if(sub&&ui.homeView!==sub){ ui.homeView=sub; ui.shopStore=null; ui.tab=''; } if(ui.tab!==tab||ui.task||ui.bill||ui.feed||ui.photo||(ui.chat&&ui.chat.open)){ ui.tab=tab; ui.task=null; ui.bill=null; ui.feed=null; ui.photo=null; if(ui.chat) ui.chat.open=false; render(); } }
 });
 initStore();
 initCaps();
