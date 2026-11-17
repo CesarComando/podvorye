@@ -192,7 +192,7 @@ let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg=
 const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[]}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[]}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
@@ -208,7 +208,7 @@ function normalize(d){
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
-const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests'];
+const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests','receipts'];
 const markRation=(a)=>{ if(a) a.rationChanged=todayISO(); };
 const stable=(o)=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((r,k2)=>(r[k2]=v[k2],r),{}):v);
 const clone=(o)=>JSON.parse(JSON.stringify(o));
@@ -1085,6 +1085,10 @@ ${animalList()}`;
   if(mode==='prices') return `На фото — ценники или полка в магазине в Латвии (магазин: ${ui.photo&&ui.photo.store||'не указан'}). Перепиши товары и цены.
 Ответь только JSON: {"items": [{"name": "короткое название по-русски, как пишут в списке покупок: молоко, хлеб, сыр, яйца 10 шт", "full": "название как на ценнике", "price": цена в евро за штуку или упаковку, "unit_price": "цена за кг или литр, если видна, например 2,49 €/кг" или null, "discount": true если это цена со скидкой}], "note": "одно предложение по-русски, если что-то неясно" или null}.
 Если на ценнике две цены (обычная и со скидкой или по карте) — бери ту, что платят сейчас, и ставь discount true. Не выдумывай: что не читается — пропусти.`;
+  if(mode==='receipt') return `На картинках — один кассовый чек из магазина в Латвии (если картинок несколько, это куски одного длинного чека сверху вниз, строки на стыках могут повторяться — не считай их дважды). Перепиши покупки.
+Ответь только JSON: {"store": "магазин как на чеке, например Rimi Mini Viestura (Daugavpils)", "chain": "сеть: Rimi, Maxima, Lidl, Mego, Elvi, top!, Beta или другое название", "date": "YYYY-MM-DD", "time": "HH:MM" или null, "total": итог к оплате в евро, "items": [{"name": "короткое название по-русски, как в списке покупок: картошка, свиная карбонада, зефир Maigums, кока-кола 0,5 л, корм для кошек", "full": "название как на чеке", "qty": количество (штук или кг), "unit": "шт" или "кг", "price": цена за штуку или кг до скидки, "paid": сколько заплачено за эту строку после скидки, "discount": скидка на строку в евро (0, если нет), "cat": одна категория из списка}]}.
+Категории: ${RCATS.join(', ')}.
+Залог за тару (Depozīta maksa) — отдельной строкой с категорией «${RCAT_DEP}». Скидку из блока ATLAIDES отнеси к своему товару (у товара есть строка «Atl. … Gala cena»). Сумма paid всех строк должна совпасть с total. Не переписывай номера карт, коды и строки оплаты. Не выдумывай: что не читается — пропусти.`;
   if(mode==='milk') return `На фото кувшин, банка, ведро или мерная ёмкость с молоком на ферме. Оцени объём молока по делениям или меткам на ёмкости (или по объёму тары, если он виден). Ответь только JSON: {"value": число литров или null, "confidence": "high" | "medium" | "low", "note": "одно короткое предложение по-русски, как оценено"}. Если делений нет — оцени примерно и поставь confidence "low".`;
   return `Ты — опытный зоотехник и специалист по хранению кормов и организации небольшой фермы. На фото — место хранения кормов (склад, сарай, кладовая, курятник или хлев).
 Дай практичные советы по-русски, по тому, что действительно видно на фото:
@@ -1102,6 +1106,7 @@ async function photoRun(){
   const p=ui.photo; if(!SAMPLE||!p||!p.files.length||p.busy) return;
   p.busy=true; p.err=''; p.res=null; p.text=''; p.ctl=new AbortController(); render();
   try{
+    if(p.mode==='receipt'){ await receiptRun(p); p.busy=false; render(); return; }
     if(p.mode==='store'){
       await SAMPLE(photoPrompt('store'),{images:p.files, signal:p.ctl.signal, onText:({text})=>{ p.text=text; const el=document.getElementById('ph-text'); if(el) el.textContent=text; }});
     } else {
@@ -1122,11 +1127,51 @@ async function photoRun(){
   }catch(e){ if(!e||e.code!=='cancelled') p.err=errText(e); if(e&&e.text&&p.mode==='store') p.text=e.text; }
   p.busy=false; render();
 }
+// ---- Чеки из магазина: фото или PDF (Mans Rimi и др.), по одному чеку на файл ----
+const RC_MAX=15, isPdf=(f)=>f&&(f.type==='application/pdf'||/\.pdf$/i.test(f.name||''));
+const rcKey=(r)=>[normName(r.chain), r.date, r.time||'', r2(r.total)].join('|');
+function chainOf(chain, store){
+  const hay=normName((chain||'')+' '+(store||''));
+  const known=[...new Set([...storeList().map(x=>x.name), ...STORES_DEFAULT])].sort((a,b)=>b.length-a.length);
+  return known.find(n=>hay.includes(normName(n)))||String(chain||store||'Магазин').trim();
+}
+function cleanReceipt(x, file){
+  const s=(v)=>v===null||v===undefined?'':String(v).trim(), n=(v)=>isFinite(+v)?+v:0;
+  const items=(Array.isArray(x&&x.items)?x.items:[]).map(it=>({name:s(it.name)||s(it.full), full:s(it.full), qty:n(it.qty)>0?n(it.qty):1, unit:s(it.unit)==='кг'?'кг':'шт',
+    price:r2(n(it.price)), paid:r2(n(it.paid)), discount:r2(Math.max(0,n(it.discount))), cat:RCATS.includes(s(it.cat))?s(it.cat):'Прочее'})).filter(it=>it.name&&it.paid>0);
+  const total=r2(n(x&&x.total)), sum=r2(items.reduce((a,it)=>a+it.paid,0)), store=s(x&&x.store);
+  return {file, store, chain:chainOf(s(x&&x.chain), store), date:/^\d{4}-\d\d-\d\d$/.test(s(x&&x.date))?x.date:todayISO(), time:/^\d\d:\d\d$/.test(s(x&&x.time))?x.time:'',
+    total:total||sum, sum, items, mismatch:total>0&&Math.abs(sum-total)>0.02};
+}
+async function receiptRun(p){
+  const lib=p.files.some(isPdf)?await import('./pdf.js'):null, have=new Set(live('receipts').map(rcKey)), seen=new Set();
+  p.receipts=[];
+  for(let i=0;i<p.files.length;i++){
+    const f=p.files[i]; p.text=`Читаю чек ${i+1} из ${p.files.length}…`; const el=document.getElementById('ph-text'); if(el) el.textContent=p.text;
+    let r;
+    try{ const imgs=isPdf(f)?await lib.pdfToImages(f):[f]; r=cleanReceipt(await SAMPLE.json(photoPrompt('receipt'),{images:imgs, signal:p.ctl.signal}), f.name); }
+    catch(e){ if(e&&e.code==='cancelled') throw e; r={file:f.name, err:errText(e)}; }
+    if(!r.err){ const k=rcKey(r); r.dup=have.has(k)?'old':seen.has(k)?'twice':''; seen.add(k); r.on=!r.dup&&r.items.length>0; }
+    p.receipts.push(r);
+  }
+  p.text='';
+}
+function receiptResults(p){
+  const R=p.receipts||[], ok=R.filter(r=>!r.err&&r.on);
+  return `<div class="builder"><strong>${R.length?`Прочитано чеков: ${R.filter(r=>!r.err).length} из ${R.length} — проверьте`:'Чеки не прочитались'}</strong>
+    ${R.map((r,i)=>r.err?`<div class="notice">${esc(r.file)}: ${esc(r.err)}</div>`:`<div class="rc-row">
+      <label class="row nowrap"><input type="checkbox" id="rc-on-${i}" ${r.on?'checked':''}><span><strong>${esc(r.store||r.chain)}</strong> · ${shortDate(r.date)}${r.time?' '+r.time:''} · <strong>${money(r.total)}</strong> · ${r.items.length} поз.</span></label>
+      ${r.dup?`<p class="hint" style="margin:0 0 0 30px">${r.dup==='old'?'Этот чек уже записан раньше.':'Тот же чек выбран дважды.'}</p>`:''}
+      ${r.mismatch?`<p class="hint" style="margin:0 0 0 30px;color:var(--bad)">Сумма строк ${money(r.sum)} не совпала с итогом ${money(r.total)} — проверьте чек.</p>`:''}
+      <details style="margin-left:30px"><summary class="hint">Товары</summary><div class="tbl-wrap"><table><tbody>${r.items.map(it=>`<tr><td>${esc(it.name)}<span class="small">${esc(it.full)} · ${esc(it.cat)}</span></td><td class="n">${fmt(it.qty,3)} ${esc(it.unit)}</td><td class="n">${money(it.paid)}${it.discount?` <span class="pill warn">−${money(it.discount)}</span>`:''}</td></tr>`).join('')}</tbody></table></div></details></div>`).join('')}
+    ${ok.length||R.some(r=>!r.err)?`<p class="hint" style="margin:0">Запишу: сумму чека — в «Учёт» (Дом, Продукты), цены товаров — в «Магазины», товары — в «Корзину».</p><div class="row"><button class="primary" data-act="photo-receipts">Записать отмеченные чеки</button></div>`:''}</div>`;
+}
 function photoSheet(){
   const p=ui.photo, an=S.animals.filter(a=>!a.planned);
-  const modes=[['weigh','Весы'],['milk','Кувшин'],['bill','Счёт'],['fuel','Чек заправки'],['prices','Ценники'],['store','Склад']];
+  const modes=[['weigh','Весы'],['milk','Кувшин'],['bill','Счёт'],['fuel','Чек заправки'],['receipt','Чек магазина'],['prices','Ценники'],['store','Склад']];
   const hint={bill:'Сфотографируйте счёт — Claude достанет получателя, сумму, срок и IBAN. Вы проверите и сохраните.',
     fuel:'Сфотографируйте чек или табло колонки — Claude достанет литры, сумму и цену.',
+    receipt:`Выберите чеки из магазина — PDF из приложения (Mans Rimi и др.) или фото бумажного чека, до ${RC_MAX} штук, по одному чеку на файл. Claude перепишет товары, вы проверите и запишете.`,
     prices:`Выберите магазин и сфотографируйте ценники (до ${IMG_MAX} фото) — Claude перепишет товары и цены, вы проверите и сохраните.`,
     weigh:'Сфотографируйте экран весов с кормом — Claude прочитает вес и предложит записать его в рацион.',
     milk:'Сфотографируйте кувшин или банку с делениями — Claude оценит, сколько литров надоили, и запишет в журнал.',
@@ -1149,6 +1194,7 @@ function photoSheet(){
       <div class="row"><button class="primary" data-act="photo-apply" ${p.kg&&p.an&&p.feed?'':'disabled'}>Записать в рацион</button></div>
     </div>`;
   }
+  if(p.mode==='receipt'&&p.receipts&&!p.busy) res+=receiptResults(p);
   if(p.res&&p.mode==='prices'){
     const it=p.items||[];
     res+=`<div class="builder"><strong>${it.length?`Найдено цен: ${it.length} — проверьте`:'Цены не прочитались — попробуйте снять ближе и ровнее'}</strong>
@@ -1175,8 +1221,8 @@ function photoSheet(){
     <div class="seg">${modes.map(([k,l])=>`<button data-act="photo-mode" data-m="${k}" aria-pressed="${p.mode===k}">${l}</button>`).join('')}</div>
     <p class="hint" style="margin:0">${hint}</p>
     ${p.mode==='prices'?`<label class="f">Магазин<select id="ph-store" data-ph="store">${storeList().map(x=>`<option value="${esc(x.name)}" ${x.name===p.store?'selected':''}>${esc(x.name)}${x.address?' — '+esc(x.address):''}</option>`).join('')}</select></label>`:''}
-    <label class="btn primary-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${p.files.length?'Переснять':'Сфотографировать'}<input type="file" id="ph-file" accept="image/*" capture="environment" ${(p.mode==='store'||p.mode==='prices')&&IMG_MAX>1?'multiple':''} data-photo="1" style="display:none"></label>
-    ${p.urls.length?`<div class="row">${p.urls.map(u=>`<img src="${u}" alt="Фото" style="width:88px;height:88px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">`).join('')}</div>`:''}
+    <label class="btn primary-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${p.mode==='receipt'?(p.files.length?'Выбрать другие чеки':'Выбрать чеки'):p.files.length?'Переснять':'Сфотографировать'}${p.mode==='receipt'?`<input type="file" id="ph-file" accept="image/*,application/pdf,.pdf" multiple data-photo="1" style="display:none">`:`<input type="file" id="ph-file" accept="image/*" capture="environment" ${(p.mode==='store'||p.mode==='prices')&&IMG_MAX>1?'multiple':''} data-photo="1" style="display:none">`}</label>
+    ${p.mode==='receipt'&&p.files.length?`<p class="hint" style="margin:0">Выбрано файлов: ${p.files.length}${p.files.length>RC_MAX-1?' (больше '+RC_MAX+' за раз нельзя)':''}</p>`:p.urls.length?`<div class="row">${p.urls.map(u=>`<img src="${u}" alt="Фото" style="width:88px;height:88px;object-fit:cover;border-radius:10px;border:1px solid var(--line)">`).join('')}</div>`:''}
     ${p.files.length&&!p.busy?`<button class="primary" data-act="photo-run">${p.mode==='store'?'Получить советы':'Распознать'}</button>`:''}
     ${res}
     <p class="hint" style="margin:0">Фото уходит только в Claude и только когда вы нажмёте кнопку; данные о месте съёмки из него удаляются. В приложении фото не сохраняется.</p>
@@ -1250,7 +1296,7 @@ function chatInstr(){
   return `Ты — дружелюбный помощник по подворью в приложении MIGLANI. Хозяйство находится в Латвии, цены в евро. Помогаешь хозяйке с кормлением, рационами, уходом, хранением кормов, здоровьем животных, учётом и развитием хозяйства.
 Тон: говори с ней тепло, по-дружески и с уважением — как заботливая, мудрая мама: бережно, спокойно, без поучений, упрёков и страшилок. Она добрый, тёплый и ранимый человек: сначала замечай, что у неё уже хорошо получается, ошибки называй мягко («давай попробуем вот так»), поддерживай и подбадривай, но не сюсюкай и не льсти. Обращайся на «ты» мягко и по-доброму. Если она переживает — сначала успокой, потом помоги по делу.
 Правила: отвечай по-русски, коротко и практично, конкретными цифрами там, где можно; опирайся на данные хозяйства ниже. Если по описанию есть признаки болезни или опасности (не ест, вздутие, колики, хромота, кровь, высокая температура) — прямо советуй срочно вызвать ветеринара. Про законы и субсидии Латвии (PVD, LAD, VID) отвечай в общих чертах и советуй уточнить на их сайтах. Если чего-то не знаешь — так и скажи. Без заголовков с # и без звёздочек; списки через «—».
-Подсказки по приложению (вкладки внизу): «Дела» — ежедневник, сводка «Что требует внимания», напоминания, «В Google Календарь»; «Дом» — Счета (напоминания, «Скопировать реквизиты», «Оплачено»), Учёт (доходы и расходы, выгрузка для Excel), Машина (заправки, расход, техосмотр, OCTA), Покупки (списки «Домой» и «Деду», режим «В магазине», где дешевле, маршрут); «Рацион» — нормы, «Составить рацион», «Подобрать дешевле», и рядом «Советы» с планом развития; «Запасы» — корма на складе и «Дрова и тепло» (сколько уходит на отопление и как сэкономить); «Журнал» — надои, яйца, вес; «Хозяйство» — животные, свои корма, отчёт на почту, участники. Кнопка с фотоаппаратом распознаёт весы, кувшин, счёт, чек заправки и склад. Если она просит то, что уже есть, — подскажи, где это. Если чего-то нет — предложи нажать «Предложить улучшение» внизу окна помощника.
+Подсказки по приложению (вкладки внизу): «Дела» — ежедневник, сводка «Что требует внимания», напоминания, «В Google Календарь»; «Дом» — Счета (напоминания, «Скопировать реквизиты», «Оплачено»), Учёт (доходы и расходы, выгрузка для Excel), Машина (заправки, расход, техосмотр, OCTA), Покупки (списки «Домой» и «Деду», режим «В магазине», где дешевле, маршрут), Корзина (что семья покупает регулярно и сколько это стоит в месяц — по чекам), Магазины (адреса и цены); «Рацион» — нормы, «Составить рацион», «Подобрать дешевле», и рядом «Советы» с планом развития; «Запасы» — корма на складе и «Дрова и тепло» (сколько уходит на отопление и как сэкономить); «Журнал» — надои, яйца, вес; «Хозяйство» — животные, свои корма, отчёт на почту, участники. Кнопка с фотоаппаратом распознаёт весы, кувшин, счёт, чек заправки, чеки из магазина (фото или PDF из Mans Rimi) и склад. Если она просит то, что уже есть, — подскажи, где это. Если чего-то нет — предложи нажать «Предложить улучшение» внизу окна помощника.
 
 Данные хозяйства:
 ${farmSummary()}`;
@@ -1614,6 +1660,45 @@ function carForm(c){
 
 // ---- Покупки ----
 const STORES_DEFAULT=['Maxima','Lidl','Rimi','Mego','Elvi','top!','Beta'];
+const RCATS=['Мясо','Рыба и икра','Молочное и яйца','Овощи и фрукты','Хлеб и выпечка','Бакалея и крупы','Сладости и снеки','Напитки','Готовая еда','Корм для животных','Дом и хозтовары','Гигиена и аптека','Цветы и подарки','Залог за тару','Прочее'], RCAT_DEP='Залог за тару';
+
+// ---- Корзина: что семья покупает регулярно (по записанным чекам) ----
+function basketStats(){
+  const R=live('receipts'); if(!R.length) return null;
+  const first=R.map(r=>r.date).sort()[0], months=Math.max(30, dayDiff(first,todayISO())+1)/30.4, by={}, cats={};
+  for(const r of R) for(const it of (r.items||[])){ if(it.cat===RCAT_DEP) continue;
+    const k=normName(it.name), b=by[k]||(by[k]={name:it.name, cat:it.cat, unit:it.unit, rids:new Set(), qty:0, spent:0});
+    b.rids.add(r.id); b.qty+=+it.qty||0; b.spent+=+it.paid||0; cats[it.cat||'Прочее']=(cats[it.cat||'Прочее']||0)+(+it.paid||0); }
+  const stores=[...new Set(live('shopPrices').map(p=>p.store))];
+  const items=Object.values(by).map(b=>{ const best=stores.map(s=>lastPrice(b.name,s)).filter(Boolean).sort((a,c)=>a.price-c.price)[0];
+    return Object.assign(b,{times:b.rids.size, perQty:b.qty/months, perMonth:b.spent/months, best}); }).sort((a,b)=>b.perMonth-a.perMonth);
+  const total=R.reduce((s,r)=>s+(+r.total||0),0);
+  return {R, first, months, items, basket:items.filter(b=>b.times>=2), cats, total};
+}
+function viewBasket(){
+  const B=basketStats(), canPhoto=SAMPLE_IMG&&(!farm||aiEnabled);
+  const addBtn=canPhoto?`<button class="primary" data-act="photo-open" data-m="receipt">📄 Добавить чеки</button>`:'';
+  if(!B) return `<section class="section"><div class="section-head"><h2>Наша корзина</h2></div><div class="card">
+    <p style="margin:0">Здесь появится ваша стандартная корзина: что вы покупаете регулярно, сколько в месяц и сколько это стоит.</p>
+    <p class="hint">Добавьте чеки — PDF из приложения магазина (Mans Rimi и др.) или фото бумажных. Чем больше чеков за 1–2 месяца, тем точнее.</p>
+    <div class="row">${addBtn}</div></div></section>`;
+  const bTotal=B.basket.reduce((s,b)=>s+b.perMonth,0), perMonth=B.total/B.months, catSum=Object.values(B.cats).reduce((a,v)=>a+v,0);
+  const rows=(list)=>list.map(b=>`<tr><td>${esc(b.name)}<span class="small">${b.times} раз · ${esc(b.cat||'')}</span></td>
+    <td class="n">${fmt(b.perQty,b.unit==='кг'?1:1)} ${esc(b.unit||'шт')}<span class="small">≈ ${money(r2(b.perMonth))}</span></td>
+    <td class="n">${b.best?`${esc(b.best.store)}<span class="small">${money(b.best.price)}${b.best.discount?' · скидка':''}</span>`:'<span class="hint">—</span>'}</td>
+    <td class="n"><button class="ghost" data-act="basket-add" data-n="${esc(b.name)}" aria-label="В список: ${esc(b.name)}">+</button></td></tr>`).join('');
+  const once=B.items.filter(b=>b.times<2);
+  return `<section class="section"><div class="section-head"><h2>Наша корзина</h2><span class="hint">по ${B.R.length} чекам с ${shortDate(B.first)}</span></div>
+    <div class="card"><div class="bal-row"><span class="lbl">В магазинах в месяц, примерно</span><span class="val"><strong>${money(r2(perMonth))}</strong></span></div>
+      <div class="bal-row"><span class="lbl">Из них регулярные покупки</span><span class="val">${money(r2(bTotal))}</span></div>
+      <p class="hint" style="margin:6px 0 0">«В месяц» — сколько в среднем уходит за месяц по этим чекам. «Дешевле всего» — по ценам, которые есть в «Магазинах».</p></div></section>
+  <section class="section"><div class="section-head"><h2>Регулярно покупаем</h2>${B.basket.length?`<button class="ghost" data-act="basket-add">Всё в «${esc(shopLists()[0])}»</button>`:''}</div>
+    ${B.basket.length?`<div class="card"><div class="tbl-wrap"><table><thead><tr><th>Товар</th><th class="n">В месяц</th><th class="n">Дешевле всего</th><th></th></tr></thead><tbody>${rows(B.basket)}</tbody></table></div></div>`:'<p class="hint">Пока ничего не повторялось — добавьте ещё чеки.</p>'}</section>
+  <section class="section"><div class="section-head"><h2>Куда уходят деньги</h2></div><div class="card">
+    ${Object.entries(B.cats).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(k)}</span><span class="val">${money(r2(v/B.months))} в мес. · ${fmt(catSum?v/catSum*100:0,0)}%</span><div class="bar"><b style="width:${catSum?v/catSum*100:0}%"></b></div></div>`).join('')}</div></section>
+  ${once.length?`<section class="section"><details><summary class="hint">Покупали один раз: ${once.length}</summary><div class="card"><div class="tbl-wrap"><table><tbody>${rows(once)}</tbody></table></div></div></details></section>`:''}
+  <section class="section"><div class="row">${addBtn}</div></section>`;
+}
 const shopLists=()=>(S&&S.settings.shopLists)||['Домой','Деду'];
 const storeList=()=>{ const own=live('stores'); return own.length?own:STORES_DEFAULT.map(n=>({id:'d_'+n,name:n,address:''})); };
 const normName=(s)=>String(s||'').trim().toLowerCase().replace(/\s+/g,' ');
@@ -1737,9 +1822,9 @@ function attention(){
 }
 
 function viewHome(){
-  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['stores','Магазины'],['heat','Тепло']];
+  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['basket','Корзина'],['stores','Магазины'],['heat','Тепло']];
   return `<div class="subnav">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
-    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, stores:viewStores, heat:viewHeat}[v]||viewBills)();
+    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, basket:viewBasket, stores:viewStores, heat:viewHeat}[v]||viewBills)();
 }
 // Хозяйство: всё про животных в одном месте
 const FARM_TABS=['ration','tips','stock','journal','herd'];
@@ -2151,6 +2236,20 @@ document.addEventListener('click',e=>{
       if(on&&on.checked&&name&&price>0&&st){ S.shopPrices.push(touch({id:uid(), name, store:st, price, date:todayISO(), full:x.full||'', discount:!!x.discount})); n++; } });
     p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.lastPriceStore=st; ui.tab='home'; ui.homeView='stores'; ui.storeOpen=st; save(); render();
     flash(n?`Записано цен: ${n} — в ${st}.`:'Ничего не записано — не отмечено ни одной цены.'); return; }
+  if(act==='photo-receipts'){ const p=ui.photo; if(!p||!p.receipts) return; let n=0, sum=0;
+    p.receipts.forEach((r,i)=>{ const on=document.getElementById('rc-on-'+i); if(r.err||!on||!on.checked) return;
+      S.receipts.push(touch({id:uid(), store:r.store, chain:r.chain, date:r.date, time:r.time, total:r.total, items:r.items}));
+      addMoney({type:'out', amount:r.total, date:r.date, sec:'home', cat:'Продукты', note:`${r.store||r.chain}: чек, ${r.items.length} поз.`});
+      if(!ownStores().some(z=>normName(z.name)===normName(r.chain))) S.stores.push(touch({id:uid(), name:r.chain, address:''}));
+      for(const it of r.items){ if(it.cat===RCAT_DEP||!(it.qty>0)||!(it.paid>0)) continue;
+        S.shopPrices.push(touch({id:uid(), name:normName(it.name), store:r.chain, price:r2(it.paid/it.qty), date:r.date, full:it.full+(it.unit==='кг'?' (за кг)':''), discount:it.discount>0})); }
+      n++; sum+=r.total; });
+    p.urls.forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; ui.tab='home'; ui.homeView='basket'; save(); render();
+    flash(n?`Записано чеков: ${n} на ${money(r2(sum))} — в «Учёт», «Магазины» и «Корзину».`:'Ничего не записано — не отмечено ни одного чека.'); return; }
+  if(act==='basket-add'){ const L=shopLists()[0], have=new Set(live('shopItems').filter(i=>i.list===L&&!i.done).map(i=>normName(i.name)));
+    const names=t.dataset.n?[t.dataset.n]:(basketStats()||{basket:[]}).basket.map(b=>b.name);
+    const add=[...new Set(names.filter(nm=>!have.has(normName(nm))))]; add.forEach(nm=>S.shopItems.push(touch({id:uid(), list:L, name:nm[0].toUpperCase()+nm.slice(1), qty:1, unit:'', note:'', done:false}))); save();
+    flash(add.length?`В список «${L}» добавлено: ${add.length}.`:`Это уже есть в списке «${L}».`); return; }
   if(act==='store-open'){ ui.storeOpen=ui.storeOpen===t.dataset.s?null:t.dataset.s; render(); return; }
   if(act==='store-del'){ ui.confirmStore=t.dataset.s; render(); return; }
   if(act==='store-del-no'){ ui.confirmStore=null; render(); return; }
@@ -2207,7 +2306,7 @@ document.addEventListener('click',e=>{
   if(act==='chat-quick'){ const el=document.getElementById('chat-in'); if(el){ el.value=t.dataset.q; chatSend(); } return; }
   if(act==='photo-open'){ const m=t.dataset.m||'weigh'; ui.photo={mode:m,files:[],urls:[]}; if(m==='prices'||t.dataset.store) ui.photo.store=t.dataset.store||ui.lastPriceStore||(storeList()[0]||{}).name||''; render(); return; }
   if(act==='photo-close'){ if(ui.photo){ ui.photo.ctl&&ui.photo.ctl.abort(); ui.photo.urls.forEach(u=>URL.revokeObjectURL(u)); } ui.photo=null; render(); return; }
-  if(act==='photo-mode'){ const p=ui.photo; if(p&&!p.busy){ p.mode=t.dataset.m; if(p.mode==='prices'&&!p.store) p.store=ui.lastPriceStore||(storeList()[0]||{}).name||''; p.res=null; p.text=''; p.err=''; if(p.mode!=='store'&&p.mode!=='prices'&&p.files.length>1){ p.files=p.files.slice(0,1); p.urls.slice(1).forEach(u=>URL.revokeObjectURL(u)); p.urls=p.urls.slice(0,1); } } render(); return; }
+  if(act==='photo-mode'){ const p=ui.photo; if(p&&!p.busy){ p.mode=t.dataset.m; if(p.mode==='prices'&&!p.store) p.store=ui.lastPriceStore||(storeList()[0]||{}).name||''; p.res=null; p.receipts=null; p.text=''; p.err=''; if(p.mode==='receipt'||(p.files.length&&p.mode!=='receipt'&&p.files.some(isPdf))){ p.urls.forEach(u=>URL.revokeObjectURL(u)); p.files=[]; p.urls=[]; } if(p.mode!=='store'&&p.mode!=='prices'&&p.files.length>1){ p.files=p.files.slice(0,1); p.urls.slice(1).forEach(u=>URL.revokeObjectURL(u)); p.urls=p.urls.slice(0,1); } } render(); return; }
   if(act==='photo-run'){ photoRun(); return; }
   if(act==='photo-stop'){ ui.photo&&ui.photo.ctl&&ui.photo.ctl.abort(); return; }
   if(act==='growth'){ growthRun(); return; }
@@ -2294,7 +2393,7 @@ document.addEventListener('change',e=>{
   }
   if(t.dataset.jset){ ui[t.dataset.jset]=t.value; render(); return; }
   if(t.dataset.photo&&ui.photo){ const p=ui.photo; p.urls.forEach(u=>URL.revokeObjectURL(u));
-    p.files=[...(t.files||[])].slice(0,(p.mode==='store'||p.mode==='prices')?IMG_MAX:1); p.urls=p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.text=''; p.err=''; render(); return; }
+    p.files=[...(t.files||[])].slice(0,p.mode==='receipt'?RC_MAX:(p.mode==='store'||p.mode==='prices')?IMG_MAX:1); p.urls=p.mode==='receipt'?[]:p.files.map(f=>URL.createObjectURL(f)); p.res=null; p.receipts=null; p.text=''; p.err=''; render(); return; }
   if(t.dataset.ph&&ui.photo){ const p=ui.photo, k=t.dataset.ph; if(k==='kg') p.kg=Math.max(0,num(t.value)); else if(k==='l') p.l=Math.max(0,num(t.value)); else p[k]=t.value;
     if(k==='an'){ const x=animalById(p.an); if(x&&p.feed&&!F[p.feed].for.includes(x.sp)) p.feed=''; } render(); return; }
   if(t.dataset.import){ const file=t.files&&t.files[0]; if(!file) return;
