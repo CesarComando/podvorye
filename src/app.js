@@ -323,12 +323,15 @@ async function initStore(){
     }
   }catch(e){}
   render(); checkReminders();
+  if(session) keepLogin();
   if(session) connect();
   if(!ui.task) startTour();
   onAuth(s=>{ const was=!!session; session=s; if(s&&!was) connect(); });
   window.addEventListener('online',()=>{ if(session&&!farm) connect(); else if(dirty) flush(); });
   window.addEventListener('offline',()=>setSync('local','Нет связи — сохраняю в телефоне'));
 }
+// Просим браузер хранить данные приложения постоянно — чтобы он сам не стёр вход при нехватке места.
+function keepLogin(){ try{ navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{}); }catch(e){} }
 async function doSignOut(){
   try{ await signOut(); }catch(e){}
   if(unsub) unsub(); unsub=null; session=null; farm=null; aiEnabled=false;
@@ -434,7 +437,7 @@ async function authGo(){
   const em=(document.getElementById('au-email').value||'').trim(), pw=document.getElementById('au-pw').value||'';
   ui.auEmail=em; if(!em||!pw){ authErr='Впишите логин и пароль.'; render(); return; }
   authBusy=true; authErr=''; render();
-  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); try{ localStorage.setItem('miglani-last-login',em); }catch(e){} session=await getSession(); await connect(); startTour(); }
+  try{ if(ui.authMode==='up') await signUp(em,pw); else await signIn(em,pw); try{ localStorage.setItem('miglani-last-login',em); }catch(e){} keepLogin(); session=await getSession(); await connect(); startTour(); }
   catch(e){ authErr=e.message||String(e); }
   authBusy=false; render();
 }
