@@ -1567,7 +1567,23 @@ function viewMoney(){
   ${out?`<section class="section"><div class="section-head"><h2>Куда ушли деньги</h2></div><div class="card"><div class="bal">${bars(bySec)}</div><div class="bal" style="margin-top:8px">${bars(byCat)}</div></div></section>`:''}
   <section class="section" id="m-records"><div class="section-head"><h2>Записи за месяц${fl?': '+MSECS[fl]:''}</h2><button class="ghost" data-act="m-csv">Скачать для Excel (.csv)</button></div>
     ${secs.length>1?`<div class="chips"><button class="chip-btn ${fl?'':'on'}" data-act="m-filter" data-s="">Все</button>${secs.map(k=>`<button class="chip-btn ${fl===k?'on':''}" data-act="m-filter" data-s="${k}">${MSECS[k]}</button>`).join('')}</div>`:''}
-    ${shown.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${shown.map(m=>`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}${fl?(()=>{ const v=per[fl]||{inc:0,out:0}, d=v.inc-v.out; return `<tr class="fm-grand"><td colspan="2">Итого «${MSECS[fl]}»${v.inc&&v.out?`<span class="small">доход +${money(v.inc)} · расход −${money(v.out)}</span>`:''}</td><td class="n" style="color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td><td></td></tr>`; })():''}</tbody></table></div></div>`:(fl?'<p class="hint">В этом разделе за месяц записей нет.</p>':'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>')}</section>`;
+    ${shown.length?`<div class="card"><div class="tbl-wrap"><table><tbody>${shown.map(m=>ui.mEdit===m.id?moneyEditRow(m):`<tr><td>${shortDate(m.date)}<span class="small">${esc(MSECS[moneySec(m)]||'')}</span></td><td>${esc(m.cat)}${m.note?`<span class="small">${esc(m.note)}</span>`:''}</td><td class="n" style="color:${m.type==='in'?'var(--ok)':'inherit'}">${m.type==='in'?'+':'−'}${money(+m.amount||0)}</td><td class="n nowrap">${ui.confirmMoney===m.id?`<button class="danger" data-act="m-del-yes" data-m="${m.id}">Удалить</button>`:`<button class="ghost" data-act="m-edit" data-m="${m.id}" aria-label="Исправить запись">✎</button><button class="ghost" data-act="m-del" data-m="${m.id}" aria-label="Удалить запись">✕</button>`}</td></tr>`).join('')}${fl?(()=>{ const v=per[fl]||{inc:0,out:0}, d=v.inc-v.out; return `<tr class="fm-grand"><td colspan="2">Итого «${MSECS[fl]}»${v.inc&&v.out?`<span class="small">доход +${money(v.inc)} · расход −${money(v.out)}</span>`:''}</td><td class="n" style="color:${d>=0?'var(--ok)':'var(--bad)'}">${d>=0?'+':'−'}${money(Math.abs(d))}</td><td></td></tr>`; })():''}</tbody></table></div></div>`:(fl?'<p class="hint">В этом разделе за месяц записей нет.</p>':'<p class="hint">Записей за этот месяц нет. Покупка дров, оплата счетов, заправки и покупки в магазине записываются сюда сами.</p>')}</section>`;
+}
+// Исправить запись в «Учёте»: тип (расход/доход), сумму, категорию, раздел, дату, заметку
+function moneyEditRow(m){
+  const t=ui.mEditType||m.type;
+  return `<tr class="m-edit"><td colspan="4"><div class="builder">
+    <strong>Исправить запись</strong>
+    <div class="seg"><button data-act="m-edit-type" data-t="out" aria-pressed="${t==='out'}">Расход</button><button data-act="m-edit-type" data-t="in" aria-pressed="${t==='in'}">Доход</button></div>
+    <div class="form-grid">
+      <label class="f">Сумма, €<input id="me-amt" inputmode="decimal" value="${fmt(+m.amount||0,2)}"></label>
+      <label class="f">Категория<input id="me-cat" list="me-cats" value="${esc(m.cat||'')}"></label>
+      <label class="f">Раздел<select id="me-sec">${Object.entries(MSECS).map(([k,l])=>`<option value="${k}" ${k===moneySec(m)?'selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="f">Дата<input type="date" id="me-date" value="${esc(m.date||todayISO())}"></label>
+    </div><datalist id="me-cats">${catsFor(t).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>
+    <label class="f">Заметка<input id="me-note" value="${esc(m.note||'')}" placeholder="необязательно"></label>
+    <div class="row"><button class="primary" data-act="m-save" data-m="${m.id}">Сохранить</button><button data-act="m-edit-cancel">Отмена</button><button class="ghost" data-act="m-del" data-m="${m.id}" style="color:var(--bad)">Удалить</button></div>
+  </div></td></tr>`;
 }
 function moneyCSV(){
   const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
@@ -2204,7 +2220,14 @@ document.addEventListener('click',e=>{
   if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
     ui.mSec=g('sec').value;
     addMoney({type:ui.mType||'out', amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
-  if(act==='m-del'){ ui.confirmMoney=t.dataset.m; render(); return; }
+  if(act==='m-edit'){ ui.mEdit=t.dataset.m; ui.mEditType=null; ui.confirmMoney=null; render(); return; }
+  if(act==='m-edit-type'){ ui.mEditType=t.dataset.t; const keep={}; for(const k of ['amt','cat','sec','date','note']){ const el=document.getElementById('me-'+k); if(el) keep[k]=el.value; } render(); for(const k in keep){ const el=document.getElementById('me-'+k); if(el) el.value=keep[k]; } return; }
+  if(act==='m-edit-cancel'){ ui.mEdit=null; ui.mEditType=null; render(); return; }
+  if(act==='m-save'){ const m=live('money').find(x=>x.id===t.dataset.m); if(!m) return; const g=(k)=>document.getElementById('me-'+k), amt=r2(num(g('amt').value));
+    if(!(amt>0)){ g('amt').focus(); flash('Впишите сумму больше нуля.'); return; }
+    Object.assign(m,{type:ui.mEditType||m.type, amount:amt, cat:g('cat').value.trim()||'Прочее', sec:g('sec').value, date:g('date').value||m.date, note:g('note').value.trim()}); touch(m);
+    ui.mEdit=null; ui.mEditType=null; save(); flash('Запись исправлена.'); return; }
+  if(act==='m-del'){ ui.confirmMoney=t.dataset.m; ui.mEdit=null; render(); return; }
   if(act==='m-filter'){ const k=t.dataset.s||null; const fromTable=t.tagName==='TR'; ui.mFilter=(fromTable&&ui.mFilter===k)?null:k; render(); if(fromTable){ const el=document.getElementById('m-records'); if(el) el.scrollIntoView({block:'start',behavior:'smooth'}); } return; }
   if(act==='m-del-yes'){ const m=live('money').find(x=>x.id===t.dataset.m); if(m){ m.deleted=true; touch(m); } ui.confirmMoney=null; save(); render(); return; }
   if(act==='m-csv'){ saveFile(`Учёт MIGLANI ${todayISO()}.csv`, moneyCSV()); return; }
