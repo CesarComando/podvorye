@@ -90,6 +90,20 @@ export async function pushFarm(farmId, data, baseUpdatedAt, report, reportEmail)
   if (!rows || !rows.length) return { conflict: true }
   return { updated_at: rows[0].updated_at }
 }
+// Личный бюджет: свой документ у каждого человека (таблица private_data, видит только владелец — правило в базе).
+async function myId() { try { const { data } = await sb.auth.getSession(); return data.session?.user?.id || null } catch { return null } }
+export async function fetchPrivate() {
+  const id = await myId(); if (!id) throw new Error('Нет входа')
+  const { data, error } = await sb.from('private_data').select('data').eq('user_id', id).maybeSingle()
+  if (error) throw error
+  return data ? data.data : null
+}
+export async function pushPrivate(doc) {
+  const id = await myId(); if (!id) throw new Error('Нет входа')
+  const { error } = await sb.from('private_data').upsert({ user_id: id, data: doc, updated_at: new Date().toISOString() })
+  if (error) throw error
+}
+export async function myUserId() { return myId() }
 export function subscribeFarm(farmId, fn) {
   const ch = sb.channel('farm-' + farmId)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'farms', filter: 'id=eq.' + farmId }, (p) => fn(p.new))
