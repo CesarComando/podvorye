@@ -247,3 +247,7 @@ body.touring .install-bar{display:none}
 .price-row input[type=checkbox]{width:22px;height:22px;flex:0 0 auto}
 .price-row .num{flex:0 0 88px;width:88px;min-width:0;text-align:right}
 td.nowrap{white-space:nowrap}
+/* режимы фото: все кнопки видны сразу, в несколько рядов (раньше уходили за край экрана) */
+.seg.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);width:100%}
+.seg.modes button{min-height:44px;font-size:14px;line-height:1.15;padding:6px}
+.seg.modes button:last-child:nth-child(3n+1){grid-column:span 3}.seg.modes button:last-child:nth-child(3n+2){grid-column:span 2}
