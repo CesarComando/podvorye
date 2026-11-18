@@ -1224,7 +1224,7 @@ function photoSheet(){
   }
   return `<div class="sheet-bg" data-act="photo-close"><div class="sheet" role="dialog" aria-modal="true" aria-label="Фото" data-stop="1">
     <div class="card-head"><h2><svg class="wheat" aria-hidden="true"><use href="#ear"/></svg>Фото вместо записи от руки</h2><button class="ghost" data-act="photo-close">✕ Закрыть</button></div>
-    <div class="seg">${modes.map(([k,l])=>`<button data-act="photo-mode" data-m="${k}" aria-pressed="${p.mode===k}">${l}</button>`).join('')}</div>
+    <div class="seg modes" role="group" aria-label="Что на фото">${modes.map(([k,l])=>`<button data-act="photo-mode" data-m="${k}" aria-pressed="${p.mode===k}">${l}</button>`).join('')}</div>
     <p class="hint" style="margin:0">${hint}</p>
     ${p.mode==='prices'?`<label class="f">Магазин<select id="ph-store" data-ph="store">${storeList().map(x=>`<option value="${esc(x.name)}" ${x.name===p.store?'selected':''}>${esc(x.name)}${x.address?' — '+esc(x.address):''}</option>`).join('')}</select></label>`:''}
     <label class="btn primary-btn"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>${p.mode==='receipt'?(p.files.length?'Выбрать другие чеки':'Выбрать чеки'):p.files.length?'Переснять':'Сфотографировать'}${p.mode==='receipt'?`<input type="file" id="ph-file" accept="image/*,application/pdf,.pdf" multiple data-photo="1" style="display:none">`:`<input type="file" id="ph-file" accept="image/*" capture="environment" ${(p.mode==='store'||p.mode==='prices')&&IMG_MAX>1?'multiple':''} data-photo="1" style="display:none">`}</label>
