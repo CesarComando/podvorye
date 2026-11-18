@@ -251,3 +251,4 @@ td.nowrap{white-space:nowrap}
 .seg.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);width:100%}
 .seg.modes button{min-height:44px;font-size:14px;line-height:1.15;padding:6px}
 .seg.modes button:last-child:nth-child(3n+1){grid-column:span 3}.seg.modes button:last-child:nth-child(3n+2){grid-column:span 2}
+.p-in{width:100%;min-width:0}td .p-in{padding:6px 8px;min-height:36px}

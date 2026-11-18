@@ -4,7 +4,7 @@ import { micBtn } from './voice.js'
 import { showInstall } from './install.js'
 import { initTour, startTour } from './tour.js'
 import { getSession, onAuth, signIn, signUp, signOut, changePassword, myFarm, joinFarm, createInvite, listMembers, removeMember,
-  fetchFarm, pushFarm, subscribeFarm, makeSample } from './backend.js'
+  fetchFarm, pushFarm, subscribeFarm, makeSample, fetchPrivate, pushPrivate, myUserId } from './backend.js'
 
 // Новая версия приложения ставится сама; проверяем при открытии и при возвращении в приложение.
 const updateSW = registerSW({ immediate: true })
@@ -341,7 +341,7 @@ function keepLogin(){ try{ navigator.storage&&navigator.storage.persist&&navigat
 async function doSignOut(){
   try{ await signOut(); }catch(e){}
   if(unsub) unsub(); unsub=null; session=null; farm=null; aiEnabled=false;
-  S=null; dirty=false; meta={farmId:null,syncedAt:null,dirty:false};
+  S=null; dirty=false; meta={farmId:null,syncedAt:null,dirty:false}; P=null; pState=''; pUid=null; ui.mView=null;
   try{ localStorage.removeItem(LS); localStorage.removeItem(LS_META); }catch(e){}
   authView=true; ui.tab='ration'; render();
 }
@@ -433,7 +433,7 @@ let navLast=null, navOv='', navRestoring=false, navSkip=0, navPend=[];
 const navPush=(st)=>{ if(navSkip) navPend.push(st); else try{ history.pushState(st,''); }catch(e){} };
 function navTrack(){
   if(authView||!loaded) return;
-  const k=JSON.stringify([ui.tab, ui.homeView||'', ui.sec||'all', ui.day||'', ui.ym||'', ui.mFilter||'']), ov=navOverlay();   // раздел, подраздел, фильтр дел, день, месяц учёта, фильтр учёта
+  const k=JSON.stringify([ui.tab, ui.homeView||'', ui.sec||'all', ui.day||'', ui.ym||'', ui.mFilter||'', ui.mView||'']), ov=navOverlay();   // раздел, подраздел, фильтр дел, день, месяц учёта, фильтр учёта
   if(navLast===null){ navLast=k; navOv=''; try{ history.replaceState({nav:k},''); }catch(e){} if(ov){ navOv=ov; navPush({nav:k, ov:1}); } return; }
   if(navRestoring){ navLast=k; navOv=ov; return; }
   if(navOv&&!ov){ navOv=''; navSkip++; try{ history.back(); }catch(e){ navSkip--; } }   // окно закрыли кнопкой — убираем его шаг из истории
@@ -446,7 +446,7 @@ window.addEventListener('popstate',(e)=>{
   navRestoring=true;
   if(navOv){ closeOverlays(); render(); navRestoring=false; return; }   // открыто окно — «Назад» закрывает только его
   const st=e.state&&e.state.nav;
-  if(st){ try{ const [tab,hv,sec,day,ym,mf]=JSON.parse(st); ui.tab=tab; if(hv) ui.homeView=hv; ui.sec=sec||'all'; ui.day=day||null; ui.ym=ym||null; ui.mFilter=mf||null; }catch(er){} closeOverlays(); render(); }
+  if(st){ try{ const [tab,hv,sec,day,ym,mf,mv]=JSON.parse(st); ui.tab=tab; if(hv) ui.homeView=hv; ui.sec=sec||'all'; ui.day=day||null; ui.ym=ym||null; ui.mFilter=mf||null; ui.mView=mv||null; }catch(er){} closeOverlays(); render(); }
   navRestoring=false;
 });
 function viewAuth(){
@@ -1618,6 +1618,66 @@ function moneyEditRow(m){
     <div class="row"><button class="primary" data-act="m-save" data-m="${m.id}">Сохранить</button><button data-act="m-edit-cancel">Отмена</button><button class="ghost" data-act="m-del" data-m="${m.id}" style="color:var(--bad)">Удалить</button></div>
   </div></td></tr>`;
 }
+// ==== Личный бюджет («Мой бюджет»): хранится отдельно у каждого, другие участники не видят ====
+let P=null, pState='', pUid=null, pTimer=null;
+const P_CATS=['Еда','Кредиты','Подписки','Машина','Связь','Одежда','Здоровье','Спорт и клуб','Подарки','Развлечения','Учёба','Прочее'];
+const pBlank=()=>({v:1, incomes:[], loans:[], subs:[], entries:[]});
+const pKey=()=>'miglani-private-'+(pUid||'x');
+async function loadPrivate(){
+  if(pState==='loading') return; pState='loading';
+  try{ pUid=await myUserId(); try{ const c=localStorage.getItem(pKey()); if(c&&!P) P=JSON.parse(c); }catch(e){} render();
+    const d=await fetchPrivate(); P=Object.assign(pBlank(), d||P||{}); pState='ok'; try{ localStorage.setItem(pKey(), JSON.stringify(P)); }catch(e){}
+  }catch(e){ pState=P?'ok':'err'; if(!P) P=null; }
+  render();
+}
+function saveP(){ try{ localStorage.setItem(pKey(), JSON.stringify(P)); }catch(e){}
+  clearTimeout(pTimer); pTimer=setTimeout(async()=>{ try{ await pushPrivate(P); }catch(e){ flash('Личный бюджет не сохранился в облаке — проверьте интернет, попробую при следующем изменении.'); } },700); }
+function moneySwitch(){
+  return `<div class="seg wide" style="margin-bottom:12px"><button data-act="m-view" data-v="" aria-pressed="${ui.mView!=='me'}">Общий учёт</button><button data-act="m-view" data-v="me" aria-pressed="${ui.mView==='me'}">🔒 Мой бюджет</button></div>`;
+}
+const loanMonths=(l)=>{ const B=+l.balance||0, A=+l.payment||0, r=(+l.rate||0)/1200; if(!(B>0)||!(A>0)) return null; if(!r) return Math.ceil(B/A); const x=1-r*B/A; return x>0?Math.ceil(-Math.log(x)/Math.log(1+r)):Infinity; };
+function viewMyBudget(){
+  if(!session) return '<div class="card"><p class="hint" style="margin:0">Личный бюджет работает только со входом в аккаунт.</p></div>';
+  if(!P&&pState!=='err'){ if(pState!=='loading') setTimeout(loadPrivate,0); return '<div class="card"><p class="hint" style="margin:0">Загружаю личный бюджет…</p></div>'; }
+  if(!P) return '<div class="card"><p style="margin:0">Не получилось загрузить личный бюджет.</p><p class="hint">Нужен интернет.</p><button data-act="p-retry">Попробовать снова</button></div>';
+  const ym=ui.ym||todayISO().slice(0,7), ent=(P.entries||[]).filter(e=>e.date&&e.date.startsWith(ym)).sort((a,b)=>b.date.localeCompare(a.date));
+  const incReg=(P.incomes||[]).reduce((s,i)=>s+(+i.amount||0),0), incOne=ent.filter(e=>e.type==='in').reduce((s,e)=>s+(+e.amount||0),0);
+  const loanPay=(P.loans||[]).filter(l=>+l.balance>0).reduce((s,l)=>s+(+l.payment||0),0), loanBal=(P.loans||[]).reduce((s,l)=>s+(+l.balance||0),0);
+  const subM=(P.subs||[]).reduce((s,x)=>s+(x.per==='год'?(+x.amount||0)/12:(+x.amount||0)),0), outE=ent.filter(e=>e.type!=='in').reduce((s,e)=>s+(+e.amount||0),0);
+  const left=incReg+incOne-loanPay-subM-outE, byCat={}; for(const e of ent.filter(e=>e.type!=='in')) byCat[e.cat]=(byCat[e.cat]||0)+(+e.amount||0);
+  const top=[...(P.loans||[])].filter(l=>+l.balance>0).sort((a,b)=>(+b.rate||0)-(+a.rate||0))[0];
+  const inp=(list,x,f,ph,w)=>`<input class="p-in" data-pf="${list}|${x.id}|${f}" value="${esc(x[f]===undefined||x[f]===null?'':String(x[f]))}" placeholder="${ph}" ${w?`inputmode="decimal" style="width:${w}px"`:''}>`;
+  const del=(list,x)=>`<button class="ghost" data-act="p-del" data-l="${list}" data-id="${x.id}" aria-label="Удалить">✕</button>`;
+  return `<div class="card" style="margin-bottom:12px"><p class="hint" style="margin:0">🔒 Этот раздел видишь только ты. Он хранится отдельно от общего учёта; у Насти здесь свой, пустой бюджет.</p></div>
+  <section class="section"><div class="day-nav"><button class="ghost big-btn" data-act="ym" data-n="-1" aria-label="Прошлый месяц">‹</button><span class="day-title" style="text-transform:none">${monthName(ym)}</span><button class="ghost big-btn" data-act="ym" data-n="1" aria-label="Следующий месяц">›</button></div>
+    <div class="card"><div class="bal-row"><span class="lbl">Доходы (постоянные + разовые)</span><span class="val" style="color:var(--ok)">${money(r2(incReg+incOne))}</span></div>
+      <div class="bal-row"><span class="lbl">Платежи по кредитам</span><span class="val">−${money(r2(loanPay))}</span></div>
+      <div class="bal-row"><span class="lbl">Подписки (в месяц)</span><span class="val">−${money(r2(subM))}</span></div>
+      <div class="bal-row"><span class="lbl">Расходы за месяц</span><span class="val">−${money(r2(outE))}</span></div>
+      <div class="bal-row"><span class="lbl"><strong>Остаётся</strong></span><span class="val"><strong style="color:${left>=0?'var(--ok)':'var(--bad)'}">${left>=0?'':'−'}${money(r2(Math.abs(left)))}</strong></span></div></div></section>
+  <section class="section"><div class="section-head"><h2>Доходы каждый месяц</h2></div><div class="card"><div class="tbl-wrap"><table><tbody>
+    ${(P.incomes||[]).map(x=>`<tr><td>${inp('incomes',x,'name','зарплата')}</td><td class="n">${inp('incomes',x,'amount','€',80)}</td><td class="n">${del('incomes',x)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="row nowrap"><input id="pi-name" placeholder="зарплата, тренерство…"><input id="pi-amt" inputmode="decimal" placeholder="€ в мес." style="max-width:100px"><button class="primary" data-act="p-add-inc">+</button></div></div></section>
+  <section class="section"><div class="section-head"><h2>Кредиты</h2><span class="hint">остаток ${money(r2(loanBal))}</span></div><div class="card">
+    ${top?`<p class="hint" style="margin:0 0 8px">Лишние деньги выгоднее всего класть на <strong>${esc(top.name||'кредит')}</strong> — у него самая высокая ставка (${fmt(+top.rate||0,2)} %).</p>`:''}
+    <div class="tbl-wrap"><table><thead><tr><th>Кредит</th><th class="n">Остаток</th><th class="n">Платёж</th><th class="n">% год.</th><th class="n">Ещё</th><th></th></tr></thead><tbody>
+    ${(P.loans||[]).map(x=>{ const m=loanMonths(x); return `<tr><td>${inp('loans',x,'name','банк')}</td><td class="n">${inp('loans',x,'balance','€',80)}</td><td class="n">${inp('loans',x,'payment','€',70)}</td><td class="n">${inp('loans',x,'rate','%',56)}</td><td class="n">${m===null?'—':m===Infinity?'<span style="color:var(--bad)">платёж мал</span>':`≈ ${m} мес.`}</td><td class="n">${del('loans',x)}</td></tr>`; }).join('')}</tbody></table></div>
+    <p class="hint" style="margin:6px 0">«Ещё» — сколько месяцев платить при таком платеже, с учётом процентов (примерно). Остаток обновляй, когда смотришь в банк.</p>
+    <div class="row nowrap"><input id="pl-name" placeholder="Inbank, Swedbank…"><input id="pl-bal" inputmode="decimal" placeholder="остаток €" style="max-width:96px"><input id="pl-pay" inputmode="decimal" placeholder="платёж €" style="max-width:90px"><input id="pl-rate" inputmode="decimal" placeholder="%" style="max-width:56px"><button class="primary" data-act="p-add-loan">+</button></div></div></section>
+  <section class="section"><div class="section-head"><h2>Подписки</h2><span class="hint">${money(r2(subM))} в мес. · ${money(r2(subM*12))} в год</span></div><div class="card"><div class="tbl-wrap"><table><tbody>
+    ${(P.subs||[]).map(x=>`<tr><td>${inp('subs',x,'name','сервис')}</td><td class="n">${inp('subs',x,'amount','€',70)}</td><td class="n"><select class="p-in" data-pf="subs|${x.id}|per"><option ${x.per!=='год'?'selected':''}>мес</option><option ${x.per==='год'?'selected':''}>год</option></select></td><td class="n">${del('subs',x)}</td></tr>`).join('')}</tbody></table></div>
+    <div class="row nowrap"><input id="ps-name" placeholder="Claude, Google…"><input id="ps-amt" inputmode="decimal" placeholder="€" style="max-width:80px"><select id="ps-per" style="max-width:76px"><option>мес</option><option>год</option></select><button class="primary" data-act="p-add-sub">+</button></div></div></section>
+  <section class="section"><div class="section-head"><h2>Траты и разовые доходы — ${monthName(ym)}</h2></div><div class="card">
+    <div class="seg"><button data-act="p-type" data-t="out" aria-pressed="${ui.pType!=='in'}">Трата</button><button data-act="p-type" data-t="in" aria-pressed="${ui.pType==='in'}">Разовый доход</button></div>
+    <div class="form-grid"><label class="f">Сумма, €<input id="pe-amt" inputmode="decimal"></label>
+      <label class="f">Категория<select id="pe-cat">${(ui.pType==='in'?['Премия','13-я зарплата','Подработка','Подарок','Прочее']:P_CATS).map(c=>`<option>${c}</option>`).join('')}</select></label>
+      <label class="f">Дата<input type="date" id="pe-date" value="${ym===todayISO().slice(0,7)?todayISO():ym+'-01'}"></label></div>
+    <label class="f">Заметка<input id="pe-note" placeholder="необязательно"></label>
+    <div class="row"><button class="primary" data-act="p-add-ent">Записать</button></div>
+    ${Object.keys(byCat).length?`<div style="margin-top:10px">${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="bal-row"><span class="lbl">${esc(k)}</span><span class="val">${money(r2(v))} · ${fmt(outE?v/outE*100:0,0)}%</span><div class="bar"><b style="width:${outE?v/outE*100:0}%"></b></div></div>`).join('')}</div>`:''}
+    ${ent.length?`<div class="tbl-wrap"><table><tbody>${ent.map(e=>`<tr><td>${shortDate(e.date)}</td><td>${esc(e.cat)}${e.note?`<span class="small">${esc(e.note)}</span>`:''}</td><td class="n" style="color:${e.type==='in'?'var(--ok)':'inherit'}">${e.type==='in'?'+':'−'}${money(+e.amount||0)}</td><td class="n"><button class="ghost" data-act="p-del" data-l="entries" data-id="${e.id}" aria-label="Удалить">✕</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">За этот месяц записей нет.</p>'}
+  </div></section>`;
+}
 function moneyCSV(){
   const rows=[['Дата','Тип','Сумма EUR','Раздел','Категория','Заметка']];
   for(const m of live('money').sort((a,b)=>a.date.localeCompare(b.date))) rows.push([m.date, m.type==='in'?'доход':'расход', String((+m.amount||0).toFixed(2)).replace('.',','), MSECS[moneySec(m)]||m.sec, m.cat, m.note||'']);
@@ -1887,7 +1947,7 @@ function attention(){
 function viewHome(){
   const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['basket','Корзина'],['stores','Магазины'],['heat','Тепло']];
   return `<div class="subnav">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
-    ({bills:viewBills, money:viewMoney, car:viewCar, shop:viewShop, basket:viewBasket, stores:viewStores, heat:viewHeat}[v]||viewBills)();
+    ({bills:viewBills, money:()=>moneySwitch()+(ui.mView==='me'?viewMyBudget():viewMoney()), car:viewCar, shop:viewShop, basket:viewBasket, stores:viewStores, heat:viewHeat}[v]||viewBills)();
 }
 // Хозяйство: всё про животных в одном месте
 const FARM_TABS=['ration','tips','stock','journal','herd'];
@@ -2253,6 +2313,16 @@ document.addEventListener('click',e=>{
   if(act==='m-add'){ const g=(k)=>document.getElementById('mn-'+k), amt=r2(num(g('amt').value)); if(!(amt>0)){ g('amt').focus(); return; }
     ui.mSec=g('sec').value;
     addMoney({type:ui.mType||'out', amount:amt, cat:catValue('mn')||'Прочее', sec:g('sec').value, date:g('date').value||todayISO(), note:g('note').value.trim()}); save(); render(); return; }
+  if(act==='m-view'){ ui.mView=t.dataset.v||null; render(); return; }
+  if(act==='p-retry'){ pState=''; loadPrivate(); return; }
+  if(act==='p-type'){ ui.pType=t.dataset.t; render(); return; }
+  if(act==='p-del'){ if(!P) return; P[t.dataset.l]=(P[t.dataset.l]||[]).filter(x=>x.id!==t.dataset.id); saveP(); render(); return; }
+  if(act&&act.startsWith('p-add-')&&P){ const v=(id)=>(document.getElementById(id)||{}).value||'', n=(id)=>r2(num(v(id)));
+    if(act==='p-add-inc'){ if(!v('pi-name').trim()||!(n('pi-amt')>0)){ flash('Впишите название и сумму в месяц.'); return; } P.incomes.push({id:uid(), name:v('pi-name').trim(), amount:n('pi-amt')}); }
+    if(act==='p-add-loan'){ if(!v('pl-name').trim()||!(n('pl-pay')>0)){ flash('Впишите банк и ежемесячный платёж.'); return; } P.loans.push({id:uid(), name:v('pl-name').trim(), balance:n('pl-bal'), payment:n('pl-pay'), rate:n('pl-rate')}); }
+    if(act==='p-add-sub'){ if(!v('ps-name').trim()||!(n('ps-amt')>0)){ flash('Впишите сервис и сумму.'); return; } P.subs.push({id:uid(), name:v('ps-name').trim(), amount:n('ps-amt'), per:v('ps-per')==='год'?'год':'мес'}); }
+    if(act==='p-add-ent'){ if(!(n('pe-amt')>0)){ flash('Впишите сумму.'); return; } P.entries.push({id:uid(), type:ui.pType==='in'?'in':'out', amount:n('pe-amt'), cat:v('pe-cat')||'Прочее', date:v('pe-date')||todayISO(), note:v('pe-note').trim()}); }
+    saveP(); render(); flash('Записано в личный бюджет.'); return; }
   if(act==='m-edit'){ ui.mEdit=t.dataset.m; ui.mEditType=null; ui.confirmMoney=null; render(); return; }
   if(act==='m-edit-type'){ ui.mEditType=t.dataset.t; const keep={}; for(const k of ['amt','sec','date','note']){ const el=document.getElementById('me-'+k); if(el) keep[k]=el.value; } render(); for(const k in keep){ const el=document.getElementById('me-'+k); if(el) el.value=keep[k]; } return; }
   if(act==='m-edit-cancel'){ ui.mEdit=null; ui.mEditType=null; render(); return; }
@@ -2461,6 +2531,7 @@ document.addEventListener('change',e=>{
     else h[k]=['wood','moist','stove','house'].includes(k)?t.value:(t.value.trim()===''?'':Math.max(0,num(t.value)));
     save(); render(); return;
   }
+  if(t.dataset.pf&&P){ const [l,id,f]=t.dataset.pf.split('|'), x=(P[l]||[]).find(z=>z.id===id); if(x){ x[f]=(f==='name'||f==='per')?t.value.trim():r2(num(t.value)); saveP(); render(); } return; }
   if(t.dataset.catpick){ const px=t.dataset.catpick, inp=document.getElementById(px+'-cat'), sec=document.getElementById(px+'-sec');
     if(inp){ inp.hidden=t.value!=='__new'; if(t.value==='__new'){ inp.value=''; inp.focus(); } }
     if(sec&&CAT_SEC[t.value]) sec.value=CAT_SEC[t.value]; return; }
