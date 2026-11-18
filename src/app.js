@@ -420,11 +420,35 @@ function render(){
   document.querySelector('nav.tabs').style.display=authView?'none':'';
   { const hb=document.getElementById('tour-btn'); if(hb) hb.hidden=authView; }
   if(authView){ main.innerHTML=top+viewAuth(); return; }
-  if(FARM_TABS.includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+farmSeg()+(ui.tab==='herd'?viewHerd():viewEmpty()); return; }
+  if(FARM_TABS.includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+farmSeg()+(ui.tab==='herd'?viewHerd():viewEmpty()); navTrack(); return; }
   if(!S&&ui.tab==='home') S=blank();
   const fv={ration:viewRation,stock:viewStock,tips:viewTips,journal:viewJournal,herd:viewHerd};
   main.innerHTML=top+(fv[ui.tab]?farmSeg()+fv[ui.tab]():({tasks:viewTasks,home:viewHome}[ui.tab]||viewTasks)())+(ui.task?taskSheet():'')+(ui.bill?billSheet():'')+(ui.feed&&F[ui.feed]?feedSheet(ui.feed):'')+(ui.photo?photoSheet():'')+(ui.chat&&ui.chat.open?chatSheet():'')+fabs();
+  navTrack();
 }
+// ---- Кнопка «Назад» на телефоне: шаг назад (закрыть окно, прошлый раздел), а не выход из приложения ----
+const navOverlay=()=>ui.photo?'photo':ui.chat&&ui.chat.open?'chat':ui.task?'task':ui.bill?'bill':ui.feed?'feed':ui.carEdit?'car':ui.shopStore?'store':ui.mEdit?'medit':'';
+function closeOverlays(){ if(ui.photo){ (ui.photo.urls||[]).forEach(u=>URL.revokeObjectURL(u)); ui.photo=null; } if(ui.chat) ui.chat.open=false; ui.task=null; ui.bill=null; ui.feed=null; ui.carEdit=null; ui.shopStore=null; ui.mEdit=null; }
+let navLast=null, navOv='', navRestoring=false, navSkip=0, navPend=[];
+const navPush=(st)=>{ if(navSkip) navPend.push(st); else try{ history.pushState(st,''); }catch(e){} };
+function navTrack(){
+  if(authView||!loaded) return;
+  const k=JSON.stringify([ui.tab, ui.homeView||'']), ov=navOverlay();
+  if(navLast===null){ navLast=k; navOv=''; try{ history.replaceState({nav:k},''); }catch(e){} if(ov){ navOv=ov; navPush({nav:k, ov:1}); } return; }
+  if(navRestoring){ navLast=k; navOv=ov; return; }
+  if(navOv&&!ov){ navOv=''; navSkip++; try{ history.back(); }catch(e){ navSkip--; } }   // окно закрыли кнопкой — убираем его шаг из истории
+  if(k!==navLast){ navLast=k; navPush({nav:k}); }
+  if(ov&&!navOv) navPush({nav:k, ov:1});
+  navOv=ov;
+}
+window.addEventListener('popstate',(e)=>{
+  if(navSkip>0){ navSkip--; if(!navSkip){ const p=navPend; navPend=[]; p.forEach(st=>{ try{ history.pushState(st,''); }catch(er){} }); } return; }
+  navRestoring=true;
+  if(navOv){ closeOverlays(); render(); navRestoring=false; return; }   // открыто окно — «Назад» закрывает только его
+  const st=e.state&&e.state.nav;
+  if(st){ try{ const [tab,hv]=JSON.parse(st); ui.tab=tab; if(hv) ui.homeView=hv; }catch(er){} closeOverlays(); render(); }
+  navRestoring=false;
+});
 function viewAuth(){
   const up=ui.authMode==='up';
   if(ui.auEmail===undefined){ try{ ui.auEmail=localStorage.getItem('miglani-last-login')||''; }catch(e){ ui.auEmail=''; } }
