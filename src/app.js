@@ -433,7 +433,7 @@ let navLast=null, navOv='', navRestoring=false, navSkip=0, navPend=[];
 const navPush=(st)=>{ if(navSkip) navPend.push(st); else try{ history.pushState(st,''); }catch(e){} };
 function navTrack(){
   if(authView||!loaded) return;
-  const k=JSON.stringify([ui.tab, ui.homeView||'']), ov=navOverlay();
+  const k=JSON.stringify([ui.tab, ui.homeView||'', ui.sec||'all', ui.day||'', ui.ym||'', ui.mFilter||'']), ov=navOverlay();   // раздел, подраздел, фильтр дел, день, месяц учёта, фильтр учёта
   if(navLast===null){ navLast=k; navOv=''; try{ history.replaceState({nav:k},''); }catch(e){} if(ov){ navOv=ov; navPush({nav:k, ov:1}); } return; }
   if(navRestoring){ navLast=k; navOv=ov; return; }
   if(navOv&&!ov){ navOv=''; navSkip++; try{ history.back(); }catch(e){ navSkip--; } }   // окно закрыли кнопкой — убираем его шаг из истории
@@ -446,7 +446,7 @@ window.addEventListener('popstate',(e)=>{
   navRestoring=true;
   if(navOv){ closeOverlays(); render(); navRestoring=false; return; }   // открыто окно — «Назад» закрывает только его
   const st=e.state&&e.state.nav;
-  if(st){ try{ const [tab,hv]=JSON.parse(st); ui.tab=tab; if(hv) ui.homeView=hv; }catch(er){} closeOverlays(); render(); }
+  if(st){ try{ const [tab,hv,sec,day,ym,mf]=JSON.parse(st); ui.tab=tab; if(hv) ui.homeView=hv; ui.sec=sec||'all'; ui.day=day||null; ui.ym=ym||null; ui.mFilter=mf||null; }catch(er){} closeOverlays(); render(); }
   navRestoring=false;
 });
 function viewAuth(){
