@@ -192,14 +192,15 @@ let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg=
 const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[]}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[], removedAnimals:[]}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
   const arr=(x)=>Array.isArray(x)?x:[];
   // Незнакомые поля (отопление, счета, машины, покупки и будущие разделы) сохраняем как есть.
   const out=Object.assign({}, d, {v:1, animals:arr(d.animals), feeds:obj(d.feeds), settings:Object.assign(b.settings,d.settings||{}),
-    customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days)});
+    customFeeds:arr(d.customFeeds), feedOverrides:obj(d.feedOverrides), log:arr(d.log), tasks:arr(d.tasks), money:arr(d.money), days:obj(d.days),
+    removedAnimals:arr(d.removedAnimals)});
   for(const k of SYNC_LISTS) out[k]=arr(d[k]);
   // раздел «Ферма» объединён с «Хозяйством»
   for(const k of ['tasks','money','bills','fuel']) for(const x of out[k]) if(x&&x.sec==='ferma') x.sec='farm';
@@ -223,19 +224,84 @@ function setSync(cls,msg){ syncCls=cls; syncMsg=msg; const el=document.getElemen
 /* Синхронизация: всё сразу пишется в телефон (работает без интернета),
    а при связи отправляется в Supabase. Конфликт двух телефонов — слияние, журнал не теряется. */
 const LS_META='podvorye-meta-v1';
-let meta={farmId:null, syncedAt:null, dirty:false};
+// «Основа» — последняя версия, о которой этот телефон точно знает, что она на сервере.
+// По ней при конфликте видно, кто что поменял: только мы, только другой телефон или оба.
+const LS_BASE='podvorye-base-v1';
+// Записи прежнего хозяйства (сменилось хозяйство или человек) — ждут решения: перенести или нет.
+const LS_PREV='podvorye-prev-farm-v1';
+let meta={farmId:null, syncedAt:null, dirty:false, userId:null};
 try{ meta=Object.assign(meta, JSON.parse(localStorage.getItem(LS_META)||'{}')); }catch(e){}
+let base=null, prevFarm=null, localFail=false;
+try{ const b=JSON.parse(localStorage.getItem(LS_BASE)||'null'); if(b&&b.farmId===meta.farmId&&b.syncedAt===meta.syncedAt) base=b.data; }catch(e){}
+try{ prevFarm=JSON.parse(localStorage.getItem(LS_PREV)||'null'); }catch(e){}
 let session=null, farm=null, aiEnabled=false, authView=false, authBusy=false, authErr='', unsub=null;
 const saveMeta=()=>{ try{ localStorage.setItem(LS_META, JSON.stringify(meta)); }catch(e){} };
-const saveLocal=()=>{ try{ if(S) localStorage.setItem(LS, JSON.stringify(S)); }catch(e){} };
+// Запись в память телефона. Если места нет — сначала жертвуем «основой» (она лишь помогает
+// при слиянии), и только если и тогда не влезло — честно говорим, что не сохранилось.
+const saveLocal=()=>{
+  if(!S) return true;
+  const txt=JSON.stringify(S);
+  try{ localStorage.setItem(LS, txt); localFail=false; return true; }catch(e){}
+  try{ localStorage.removeItem(LS_BASE); localStorage.setItem(LS, txt); localFail=false; return true; }catch(e){}
+  localFail=true; return false;
+};
+function setBase(data){
+  base=data?clone(data):null;
+  try{ if(base) localStorage.setItem(LS_BASE, JSON.stringify({farmId:meta.farmId, syncedAt:meta.syncedAt, data:base})); else localStorage.removeItem(LS_BASE); }
+  catch(e){ try{ localStorage.removeItem(LS_BASE); }catch(e2){} }   // нет места — основа живёт до закрытия приложения
+}
+function savePrev(p){ prevFarm=p; try{ if(p) localStorage.setItem(LS_PREV, JSON.stringify(p)); else localStorage.removeItem(LS_PREV); }catch(e){} }
 
 function save(){
   if(readOnly) return;
   dirty=true; meta.dirty=true; saveLocal(); saveMeta();
   clearTimeout(saveT); saveT=setTimeout(flush,800);
-  setSync('saving', navigator.onLine&&session?'Сохраняю…':'Сохранено в телефоне');
+  if(localFail){ setSync('err','Не сохранилось в телефоне'); render(); }
+  else setSync('saving', navigator.onLine&&session?'Сохраняю…':'Сохранено в телефоне');
 }
-function mergeData(local, remote){
+const same=(a,b)=>stable(a)===stable(b);
+// Животные: по постоянному id. Если есть основа — берём ту сторону, которая менялась;
+// если менялись обе — по полям (одно и то же поле поменяли оба — остаётся наше).
+// Удалённое на любом телефоне не возвращается (список removedAnimals).
+function mergeAnimals(l, r, b, removed){
+  const L=new Map((l||[]).map(a=>[a.id,a])), R=new Map((r||[]).map(a=>[a.id,a])), B=b?new Map((b||[]).map(a=>[a.id,a])):null;
+  const ids=[...L.keys(), ...[...R.keys()].filter(id=>!L.has(id))], out=[];
+  for(const id of ids){
+    if(removed.has(id)) continue;
+    const la=L.get(id), ra=R.get(id), ba=B&&B.get(id);
+    if(la&&ra){
+      if(!ba) out.push((ra.updatedAt||0)>(la.updatedAt||0)?ra:la);
+      else if(same(la,ba)) out.push(ra);
+      else if(same(ra,ba)) out.push(la);
+      else { const x={}; for(const k of new Set([...Object.keys(la),...Object.keys(ra)])){ const v=same(la[k],ba[k])?ra[k]:la[k]; if(v!==undefined) x[k]=v; } out.push(x); }
+    } else {
+      const only=la||ra;
+      // было в основе, а на другом телефоне исчезло: удалено там. Если у нас его не правили — удаляем и тут.
+      if(ba&&same(only,ba)) continue;
+      out.push(only);
+    }
+  }
+  return out;
+}
+// Заметки дней: дата за датой. Поменял один — берём его версию; поменяли оба по-разному — сохраняем обе.
+const DAY_SPLIT='\n\n— версия с другого телефона —\n';
+function mergeDays(l, r, b){
+  l=l||{}; r=r||{}; const out={};
+  for(const k of new Set([...Object.keys(l),...Object.keys(r)])){
+    const lv=l[k], rv=r[k], bv=b?b[k]:undefined;
+    let v;
+    if(same(lv,rv)) v=lv;
+    else if(b&&same(lv,bv)) v=rv;
+    else if(b&&same(rv,bv)) v=lv;
+    else if(lv==null||lv==='') v=rv;
+    else if(rv==null||rv==='') v=lv;
+    else if(typeof lv==='string'&&typeof rv==='string') v=lv.includes(rv)?lv:rv.includes(lv)?rv:lv+DAY_SPLIT+rv;
+    else v=lv;
+    if(v!=null&&v!=='') out[k]=v;
+  }
+  return out;
+}
+function mergeData(local, remote, b){
   const m=clone(local), ids=new Set((m.log||[]).map(e=>e.id));
   for(const e of (remote.log||[])) if(!ids.has(e.id)) m.log.push(e);
   // дела и учёт: по id, побеждает более свежая правка (updatedAt); удаление — пометка deleted
@@ -244,38 +310,55 @@ function mergeData(local, remote){
     for(const r of (remote[k]||[])){ const l=by.get(r.id); if(!l||(r.updatedAt||0)>(l.updatedAt||0)) by.set(r.id,r); }
     m[k]=[...by.values()];
   }
-  m.days=Object.assign({}, remote.days||{}, m.days||{});
+  const removed=new Set([...(local.removedAnimals||[]), ...(remote.removedAnimals||[])]);
+  m.removedAnimals=[...removed];
+  m.animals=mergeAnimals(local.animals, remote.animals, b&&b.animals, removed);
+  m.days=mergeDays(local.days, remote.days, b&&b.days);
+  // Остальное (склад, настройки, свои корма…): если у нас это не менялось с основы — берём с сервера.
+  if(b){
+    const done=new Set(['v','log','animals','days','removedAnimals',...SYNC_LISTS]);
+    for(const k of new Set([...Object.keys(local),...Object.keys(remote)])){
+      if(done.has(k)||!same(local[k],b[k])) continue;
+      if(remote[k]===undefined) delete m[k]; else m[k]=clone(remote[k]);
+    }
+  }
   return m;
 }
 async function flush(){
   if(!S) return;
   if(saving){ again=true; return; }
-  if(!session||!meta.farmId||!navigator.onLine){ setSync('local','В телефоне · отправлю при связи'); return; }
+  if(!session||!meta.farmId||!navigator.onLine){ if(localFail) setSync('err','Не сохранилось в телефоне'); else setSync('local','В телефоне · отправлю при связи'); return; }
   saving=true; again=false;
   let retry=false;
   try{
     let rep=''; try{ rep=reportText(); }catch(e){}
-    let r=await pushFarm(meta.farmId, S, meta.syncedAt, rep, S.settings.email);
+    let sent=clone(S);
+    let r=await pushFarm(meta.farmId, sent, meta.syncedAt, rep, S.settings.email);
     if(r.conflict){
-      const remote=await fetchFarm(meta.farmId);
-      S=normalize(mergeData(S, normalize(remote.data))); meta.syncedAt=remote.updated_at;
-      r=await pushFarm(meta.farmId, S, meta.syncedAt, rep, S.settings.email);
+      const remote=await fetchFarm(meta.farmId), rd=normalize(remote.data);
+      S=normalize(mergeData(S, rd, base)); meta.syncedAt=remote.updated_at; setBase(rd);
+      sent=clone(S);
+      r=await pushFarm(meta.farmId, sent, meta.syncedAt, rep, S.settings.email);
       if(r.conflict) throw new Error('conflict');
       render();
     }
-    meta.syncedAt=r.updated_at; lastSaved=stable(S);
+    meta.syncedAt=r.updated_at; setBase(sent); lastSaved=stable(S);
     if(!again){ dirty=false; meta.dirty=false; }
     saveLocal(); saveMeta(); setSync('','Сохранено');
   }catch(e){ setSync('err','Не отправилось — повторю'); retry=true; }
   saving=false;
   if(again) flush(); else if(retry) setTimeout(flush, 10000);
 }
+// Версия с сервера. Пока человек в поле ввода — откладываем; при выходе из поля всё
+// проверяется заново: если за это время появились свои правки (dirty), чужую версию не
+// ставим поверх — отправка заметит конфликт и сольёт записи по основе.
 function applyRemote(row){
   if(!row||row.updated_at===meta.syncedAt||dirty||saving) return;
-  const go=()=>{ S=normalize(clone(row.data)); meta.syncedAt=row.updated_at; saveLocal(); saveMeta(); setSync('','Сохранено'); render(); };
+  if(meta.syncedAt&&Date.parse(row.updated_at)<Date.parse(meta.syncedAt)) return;   // уже есть версия новее
   const ae=document.activeElement;
-  if(ae&&/INPUT|SELECT|TEXTAREA/.test(ae.tagName)){ deferRemote=go; return; }
-  go();
+  if(ae&&/INPUT|SELECT|TEXTAREA/.test(ae.tagName)){ deferRemote=row; return; }
+  deferRemote=null;
+  S=normalize(clone(row.data)); meta.syncedAt=row.updated_at; setBase(S); saveLocal(); saveMeta(); setSync('','Сохранено'); render();
 }
 function useFarm(f){
   farm=f; aiEnabled=!!f.ai_enabled;
@@ -288,14 +371,20 @@ async function connect(){
   try{
     const f=await myFarm();
     const remoteHas=!!(f.data&&Array.isArray(f.data.animals)&&f.data.animals.length);
-    if(meta.farmId!==f.id){
-      meta.farmId=f.id;
-      if(S&&S.animals.length&&!remoteHas){ meta.syncedAt=f.updated_at; dirty=true; meta.dirty=true; saveMeta(); useFarm(f); await flush(); }
-      else { if(remoteHas) S=normalize(f.data); meta.syncedAt=f.updated_at; dirty=false; meta.dirty=false; saveLocal(); saveMeta(); useFarm(f); }
+    const me=session.user&&session.user.id||null;
+    if(meta.farmId!==f.id||(meta.userId&&me&&meta.userId!==me)){
+      // Хозяйство (или человек) сменилось. Копия на телефоне принадлежит прежнему хозяйству —
+      // сама она в новое НЕ уходит: откладываем её, а перенос — отдельная кнопка.
+      const sameFarm=meta.farmId===f.id, remoteDoc=remoteHas||!!(f.data&&f.data.v);
+      const park=S&&hasRecords(S)&&!(sameFarm&&!dirty);
+      if(park) savePrev({farmId:meta.farmId, userId:meta.userId, at:new Date().toISOString(), data:S});
+      meta.farmId=f.id; meta.userId=me;
+      S=remoteDoc?normalize(f.data):(park||!S?blank():S);
+      meta.syncedAt=f.updated_at; dirty=false; meta.dirty=false; setBase(remoteDoc?S:null); saveLocal(); saveMeta(); useFarm(f);
     } else {
-      useFarm(f);
+      meta.userId=me; useFarm(f);
       if(dirty) await flush();
-      else if(f.updated_at!==meta.syncedAt){ S=remoteHas||f.data&&f.data.v?normalize(f.data):S; meta.syncedAt=f.updated_at; saveLocal(); saveMeta(); }
+      else if(f.updated_at!==meta.syncedAt){ S=remoteHas||f.data&&f.data.v?normalize(f.data):S; meta.syncedAt=f.updated_at; setBase(S); saveLocal(); saveMeta(); }
     }
     authView=false; ui.members=undefined;
     if(!dirty) setSync('','Сохранено');
@@ -342,10 +431,11 @@ async function doSignOut(){
   try{ await signOut(); }catch(e){}
   if(unsub) unsub(); unsub=null; session=null; farm=null; aiEnabled=false;
   S=null; dirty=false; meta={farmId:null,syncedAt:null,dirty:false}; P=null; pState=''; pUid=null; ui.mView=null;
-  try{ localStorage.removeItem(LS); localStorage.removeItem(LS_META); }catch(e){}
+  base=null; prevFarm=null; localFail=false; deferRemote=null;
+  try{ localStorage.removeItem(LS); localStorage.removeItem(LS_META); localStorage.removeItem(LS_BASE); localStorage.removeItem(LS_PREV); }catch(e){}
   authView=true; ui.tab='ration'; render();
 }
-document.addEventListener('focusout',()=>{ setTimeout(()=>{ if(deferRemote&&!/INPUT|SELECT/.test((document.activeElement||{}).tagName||'')){ const f=deferRemote; deferRemote=null; f(); } },50); });
+document.addEventListener('focusout',()=>{ setTimeout(()=>{ if(deferRemote&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||'')){ const row=deferRemote; deferRemote=null; applyRemote(row); } },50); });
 
 /* ---------- Утилиты ---------- */
 // Логин вместо внутреннего адреса: nastya@miglani.daugavpilstopteam.lv → nastya
@@ -411,12 +501,24 @@ function lowStock(){
 
 /* ---------- Отрисовка ---------- */
 const main=document.getElementById('main');
+const hasRecords=(d)=>!!d&&((d.animals||[]).length||(d.log||[]).length||Object.keys(d.days||{}).length||SYNC_LISTS.some(k=>(d[k]||[]).some(x=>x&&!x.deleted)));
+function localFailNotice(){
+  if(!localFail||!S) return '';
+  return `<div class="notice" style="margin-bottom:12px"><b>Телефон не смог сохранить изменения</b> — закончилось место в памяти браузера. Они пока только на экране${session&&navigator.onLine?' и уйдут на сервер, когда появится связь':''}. Не закрывайте приложение — сохраните копию файлом.
+    <div class="row" style="margin-top:8px"><button data-act="data-dl">Сохранить копию файлом</button></div></div>`;
+}
+function prevFarmNotice(){
+  const p=prevFarm; if(!p||!p.data) return '';
+  const d=p.data, n=(d.animals||[]).length, tk=(d.tasks||[]).filter(x=>x&&!x.deleted).length;
+  return `<div class="notice" style="margin-bottom:12px">На телефоне остались записи из прежнего хозяйства${n||tk?` (${[n?n+' живот.':'',tk?tk+' дел':''].filter(Boolean).join(', ')})`:''}. В это хозяйство они сами не попадут.
+    <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${readOnly?'':`<button data-act="prev-move">Перенести в это хозяйство</button>`}<button data-act="prev-dl">Сохранить файлом</button>${ui.confirmPrev?`<button data-act="prev-drop-yes" class="danger">Да, удалить копию</button><button data-act="prev-drop-no">Отмена</button>`:`<button data-act="prev-drop">Удалить копию</button>`}</div></div>`;
+}
 function render(){
   applyFeedData();
   const area=FARM_TABS.includes(ui.tab)?'farm':ui.tab; if(area==='farm') ui.lastFarm=ui.tab;
   document.querySelectorAll('nav.tabs button').forEach(b=>b.setAttribute('aria-current',b.dataset.tab===area?'page':'false'));
   if(!loaded){ main.innerHTML=`<div class="card empty"><p class="hint">Загружаю данные хозяйства…</p>${note?`<div class="notice">${esc(note)}</div>`:''}</div>`; return; }
-  const top=note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'';
+  const top=(note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'')+(!authView?localFailNotice()+prevFarmNotice():'');
   document.querySelector('nav.tabs').style.display=authView?'none':'';
   { const hb=document.getElementById('tour-btn'); if(hb) hb.hidden=authView; }
   if(authView){ main.innerHTML=top+viewAuth(); return; }
@@ -2430,7 +2532,8 @@ document.addEventListener('click',e=>{
   if(act==='sign-out-yes'){ ui.confirmOut=false; doSignOut(); return; }
   if(act==='make-invite'){ if(!farm) return; t.disabled=true; createInvite(farm.id).then(c=>{ ui.invite=c; render(); }).catch(()=>{ note='Не получилось создать код — проверьте интернет.'; render(); }); return; }
   if(act==='join-farm'){ const c=(document.getElementById('join-code').value||'').trim(); if(c.length<6) return; t.disabled=true;
-    joinFarm(c).then(f=>{ meta.farmId=f.id; meta.syncedAt=f.updated_at; meta.dirty=false; dirty=false; S=normalize(f.data); saveLocal(); saveMeta(); useFarm(f); ui.members=undefined; ui.open.join=false; note=null; ui.tab='ration'; render(); })
+    joinFarm(c).then(f=>{ if(S&&hasRecords(S)) savePrev({farmId:meta.farmId, userId:meta.userId, at:new Date().toISOString(), data:S});
+      meta.farmId=f.id; meta.syncedAt=f.updated_at; meta.dirty=false; dirty=false; S=normalize(f.data); setBase(S); saveLocal(); saveMeta(); useFarm(f); ui.members=undefined; ui.open.join=false; note=null; ui.tab='ration'; render(); })
       .catch(err=>{ note=err.message||'Не получилось присоединиться.'; render(); }); return; }
   if(act==='rm-member'){ ui.confirmRm=t.dataset.u; render(); return; }
   if(act==='rm-member-no'){ ui.confirmRm=null; render(); return; }
@@ -2453,6 +2556,11 @@ document.addEventListener('click',e=>{
   if(act==='growth-stop'){ ui.growth&&ui.growth.ctl&&ui.growth.ctl.abort(); return; }
   if(act==='report-dl'){ saveFile(`Отчёт MIGLANI ${todayISO()}.txt`, reportText()); return; }
   if(act==='data-dl'){ saveFile(`Данные MIGLANI ${todayISO()}.json`, JSON.stringify(S,null,1)); return; }
+  if(act==='prev-dl'){ if(prevFarm) saveFile(`Данные прежнего хозяйства ${String(prevFarm.at||'').slice(0,10)}.json`, JSON.stringify(prevFarm.data,null,1)); return; }
+  if(act==='prev-drop'){ ui.confirmPrev=true; render(); return; }
+  if(act==='prev-drop-no'){ ui.confirmPrev=false; render(); return; }
+  if(act==='prev-drop-yes'){ savePrev(null); ui.confirmPrev=false; render(); return; }
+  if(act==='prev-move'){ if(!prevFarm||readOnly) return; if(!S) S=blank(); S=normalize(mergeData(S, normalize(prevFarm.data), null)); savePrev(null); ui.confirmPrev=false; save(); flash('Записи прежнего хозяйства перенесены сюда.'); return; }
   if(act==='offline-dl'){ saveFile('Рационы подворья (офлайн).html', offlineHTML()); return; }
   if(act==='optimize'&&a){ ui.opt[id]=optimize(a); render(); return; }
   if(act==='opt-close'){ delete ui.opt[id]; render(); return; }
@@ -2495,7 +2603,7 @@ document.addEventListener('click',e=>{
     case 'open': ui.open[id]=!ui.open[id]; ui.confirmDel=null; render(); break;
     case 'del': ui.confirmDel=id; render(); break;
     case 'del-no': ui.confirmDel=null; render(); break;
-    case 'del-yes': S.animals=S.animals.filter(x=>x.id!==id); ui.confirmDel=null; save(); render(); break;
+    case 'del-yes': S.animals=S.animals.filter(x=>x.id!==id); S.removedAnimals=S.removedAnimals||[]; if(!S.removedAnimals.includes(id)) S.removedAnimals.push(id); ui.confirmDel=null; save(); render(); break;
     case 'add-stock': {
       const fid=t.dataset.feed, inp=document.getElementById('add-'+fid), v=num(inp.value); if(v<=0) return;
       const st=S.feeds[fid]=S.feeds[fid]||{}; const daily=herdDaily(S.settings.includePlanned)[fid]||0;
