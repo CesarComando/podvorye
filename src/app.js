@@ -520,7 +520,7 @@ function render(){
   if(!loaded){ main.innerHTML=`<div class="card empty"><p class="hint">Загружаю данные хозяйства…</p>${note?`<div class="notice">${esc(note)}</div>`:''}</div>`; return; }
   const top=(note?`<div class="notice" style="margin-bottom:12px">${esc(note)}</div>`:'')+(!authView?localFailNotice()+prevFarmNotice():'');
   document.querySelector('nav.tabs').style.display=authView?'none':'';
-  { const hb=document.getElementById('tour-btn'); if(hb) hb.hidden=authView; }
+  for(const id of ['tour-btn','settings-btn']){ const hb=document.getElementById(id); if(hb) hb.hidden=authView; }
   if(authView){ main.innerHTML=top+viewAuth(); return; }
   if(FARM_TABS.includes(ui.tab)&&(!S||!S.animals.length)){ main.innerHTML=top+farmSeg()+(ui.tab==='herd'?viewHerd():viewEmpty()); navTrack(); return; }
   if(!S&&ui.tab==='home') S=blank();
@@ -2296,7 +2296,7 @@ function animalForm(a){
 function viewHerd(){
   const list=S&&S.animals.length?S.animals.map(animalForm).join(''):'<p class="hint">Животных пока нет.</p>';
   // настройки — внизу, главное (животные) — сверху
-  const settings=`
+  const settings=`<div id="settings"></div>
   ${S?`<section class="section"><div class="section-head"><h2>Отчёт на почту</h2><span class="hint">рацион, запасы, деньги, продуктивность</span></div>
     <div class="card">
       <label class="f">Ваша почта<input type="email" id="set-email" data-set="email" value="${esc(S.settings.email||'')}" placeholder="name@example.com" autocomplete="email"></label>
@@ -2358,6 +2358,11 @@ function newAnimal(sp){
   const a={id:uid(), sp, name:s.label+(n>1?' '+n:''), w:s.w, state:Object.keys(s.states)[0], milk:sp==='goat'?2:sp==='cow'?15:0, fat:3.8, count:sp==='hens'?10:1, planned:false, feeds:[...s.feeds], manual:null};
   return a;
 }
+// Шестерёнка в шапке: сразу к настройкам (пароль, участники, отчёт, копия) внизу вкладки «Животные».
+document.getElementById('settings-btn')?.addEventListener('click',()=>{
+  ui.tab='herd'; render();
+  const el=document.getElementById('settings'); if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+});
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-tab],[data-act]'); if(!t) return;
   if(t.dataset.tab){ ui.tab=t.dataset.tab==='farm'?(ui.lastFarm||'ration'):t.dataset.tab; render(); window.scrollTo(0,0); return; }

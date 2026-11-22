@@ -212,6 +212,7 @@ details[open] summary{margin-bottom:10px}
 /* ---------- Кнопка «?» и подсказка-инструкция ---------- */
 header.top .help-btn{position:absolute;top:52px;right:10px;z-index:1;width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;
   font-family:var(--font-display);font-weight:700;font-size:18px;background:var(--surface);color:var(--accent);border:2px solid var(--accent);box-shadow:0 1px 4px rgba(60,60,20,.15)}
+header.top .gear-btn{right:58px;font-family:system-ui,sans-serif;font-size:22px;line-height:1}
 .tour{position:fixed;inset:0;z-index:80}
 body.touring .install-bar{display:none}
 .tour-shade{position:absolute;inset:0;background:rgba(20,30,15,.55)}
