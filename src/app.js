@@ -192,7 +192,7 @@ let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg=
 const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[], removedAnimals:[]}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[], feedLog:[], removedAnimals:[]}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
@@ -215,7 +215,7 @@ function normalize(d){
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
-const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests','receipts'];
+const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests','receipts','feedLog'];
 const markRation=(a)=>{ if(a) a.rationChanged=todayISO(); };
 const stable=(o)=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((r,k2)=>(r[k2]=v[k2],r),{}):v);
 const clone=(o)=>JSON.parse(JSON.stringify(o));
@@ -405,6 +405,8 @@ async function initStore(){
     [[addDaysISO(td,-40),40,62.4,120200,true,'Neste'],[addDaysISO(td,-20),35,53.9,120700,true,'Virši'],[addDaysISO(td,-3),38,57.8,121210,true,'Circle K']].forEach(([date,liters,sum,odo,full,station])=>S.fuel.push(touch({id:uid(),car:'car1',date,liters,sum,price:sum/liters,odo,full,station})));
     addShopItems('молоко, хлеб, 10 яиц, сыр','Домой'); addShopItems('кефир, гречка, лекарства','Деду');
     [['молоко','Lidl',0.89],['молоко','Maxima',1.05],['хлеб','Lidl',1.19],['хлеб','Maxima',0.99],['сыр','Lidl',2.49],['сыр','Maxima',3.6]].forEach(([name,store,price])=>S.shopPrices.push(touch({id:uid(),name,store,price,date:td})));
+    [['комбикорм для несушек, 1 период, 20 кг',13.9,20,'kombi_kury'],['комбикорм для несушек NATURE, 3 период, 40 кг',26.8,40,'kombi_kury'],['пшеница, зерно 30 кг',13.5,30,'pshenica'],['ракушка 25 кг',26.9,25,'rakushka']].forEach(([name,price,kg,feed])=>S.shopPrices.push(touch({id:uid(),name,store:'KG Latvija',price,kg,feed,date:td})));
+    S.shopPrices.push(touch({id:uid(),name:'пшеница, зерно 30 кг',store:'ABrands',price:12.2,kg:30,feed:'pshenica',date:td}));
     S.heat=Object.assign(heatDefaults(),{bagPrice:2.5,stockL:40*30,stockDate:td,area:90});
     addMoney({type:'in',amount:45,cat:'Продажа яиц',sec:'farm'}); addMoney({type:'out',amount:62.4,cat:'Корм',sec:'farm'});
     ui.tab='tasks'; } }
@@ -784,7 +786,11 @@ function periodDays(){
   if(s.period==='custom') return Math.max(1,+s.customDays||1);
   let d=dayDiff(todayISO(), s.seasonEnd||'2027-05-01'); return d>0?d:1;
 }
-function viewStock(){ return viewFeedStock(); }
+function viewStock(){
+  const v=['cheap','diary'].includes(ui.stockView)?ui.stockView:'feed';
+  return `<div class="seg wide" style="margin-bottom:12px">${[['feed','Склад'],['cheap','Где выгоднее'],['diary','Дневник корма']].map(([k,l])=>`<button data-act="stock-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
+    (v==='cheap'?viewFeedCheap():v==='diary'?viewFeedDiary():viewFeedStock());
+}
 function viewFeedStock(){
   const s=S.settings, inc=s.includePlanned, daily=herdDaily(inc), days=periodDays();
   const used=FEEDS.filter(f=>daily[f.id]>0||(S.feeds[f.id]&&+S.feeds[f.id].stock>0));
@@ -849,6 +855,161 @@ function viewFeedStock(){
     </tbody></table></div></div></section>`;
   })()}
   <section class="section"><div class="section-head"><h2>Корма на складе</h2><span class="hint">остаток уменьшается сам по дневному расходу</span></div>${cards||'<p class="hint">Нет кормов в рационах.</p>'}</section>`;
+}
+
+/* ---------- Корма: где выгоднее и дневник корма ----------
+   Цены кормов — те же записи «Магазинов» (shopPrices), у которых указан вес мешка (kg).
+   Связь с кормом рациона — поле feed (id из FEEDS). Дневник — список feedLog (сливается по id, как дела). */
+const meId=()=>session&&session.user?session.user.id:'';
+const ppkOf=(p)=>(+p.kg>0&&+p.price>0)?(+p.price)/(+p.kg):0;
+const offerKey=(p)=>p.store+'|'+p.name;
+function feedOffers(){
+  const by={}; for(const p of live('shopPrices')) if(ppkOf(p)){ const k=offerKey(p); if(!by[k]||p.date>by[k].date||(p.date===by[k].date&&(p.updatedAt||0)>(by[k].updatedAt||0))) by[k]=p; }
+  return Object.values(by);
+}
+const offerGroup=(p)=>p.feed&&F[p.feed]?F[p.feed].name:'Другие корма';
+const offerLabel=(p)=>`${p.name} · ${p.store}`;
+const eur2=(v)=>(+v||0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' '+cur();
+const eur3=(v)=>(+v||0).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:3})+' '+cur();
+function offerByKey(k){ return feedOffers().find(p=>offerKey(p)===k)||null; }
+// Сравнение: самый дешёвый за кг в той же группе
+function cheaperThan(p){
+  const same=feedOffers().filter(x=>offerGroup(x)===offerGroup(p)&&offerKey(x)!==offerKey(p)).sort((a,b)=>ppkOf(a)-ppkOf(b));
+  return same.length&&ppkOf(same[0])<ppkOf(p)-1e-9?same[0]:null;
+}
+// Дневник по дням: яйца дня (один раз на день), стоимость всего корма за день
+function diaryDays(){
+  const days={};
+  for(const e of live('feedLog')){ const d=days[e.date]=days[e.date]||{eggs:null,hens:0,cost:0,costKnown:true,prods:new Set()};
+    if(+e.eggs>0) d.eggs=Math.max(d.eggs||0,+e.eggs); if(+e.hens>0) d.hens=Math.max(d.hens,+e.hens);
+    const o=e.prod?offerByKey(e.prod):null, kg=+e.kg||0;
+    if(kg>0){ if(o) d.cost+=kg*ppkOf(o); else d.costKnown=false; }
+    d.prods.add(e.prod||e.prodName||''); }
+  return days;
+}
+function diaryStats(){
+  const days=diaryDays(), by={};
+  for(const e of live('feedLog')){ const k=e.prod||('?'+(e.prodName||'')); const s=by[k]=by[k]||{key:k, name:e.prod&&offerByKey(e.prod)?offerLabel(offerByKey(e.prod)):(e.prodName||'без названия'), kg:0, entries:0, stars:[], notes:[], dates:new Set()};
+    s.kg+=+e.kg||0; s.entries++; s.dates.add(e.date); if(+e.stars>0) s.stars.push(+e.stars); if(e.note||e.cond) s.notes.push(e); }
+  for(const s of Object.values(by)){
+    let eggs=0, henDays=0, cost=0, costOk=true, nDays=0;
+    for(const d of s.dates){ const x=days[d]; if(!x||x.eggs===null) continue; nDays++; eggs+=x.eggs; henDays+=x.hens||0; cost+=x.cost; if(!x.costKnown) costOk=false; }
+    s.eggDays=nDays; s.eggs=eggs; s.perHen=henDays?eggs/henDays:null; s.perEgg=eggs&&cost&&costOk?cost/eggs:null;
+    s.avgStars=s.stars.length?s.stars.reduce((a,b)=>a+b,0)/s.stars.length:null;
+  }
+  let eggs=0, cost=0, ok=true, n=0; for(const x of Object.values(days)) if(x.eggs!==null){ n++; eggs+=x.eggs; cost+=x.cost; if(!x.costKnown) ok=false; }
+  return {list:Object.values(by).sort((a,b)=>b.entries-a.entries), all:{days:n, eggs, perEgg:eggs&&cost&&ok?cost/eggs:null}};
+}
+const starTxt=(n)=>n?'★'.repeat(Math.round(n))+'☆'.repeat(5-Math.round(n)):'';
+function offerOptions(sel){
+  const groups={}; for(const p of feedOffers()) (groups[offerGroup(p)]=groups[offerGroup(p)]||[]).push(p);
+  return Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0],'ru')).map(([g,l])=>`<optgroup label="${esc(g)}">${l.sort((a,b)=>ppkOf(a)-ppkOf(b)).map(p=>`<option value="${esc(offerKey(p))}" ${offerKey(p)===sel?'selected':''}>${esc(p.name)} — ${eur2(p.price)} (${esc(p.store)})</option>`).join('')}</optgroup>`).join('');
+}
+const hensAnimal=()=>S.animals.find(a=>a.sp==='hens'&&!a.planned);
+
+function viewFeedCheap(){
+  const offers=feedOffers(), groups={};
+  for(const p of offers) (groups[offerGroup(p)]=groups[offerGroup(p)]||[]).push(p);
+  const st=diaryStats(), perEgg={}; for(const s of st.list) if(s.perEgg) perEgg[s.key]=s.perEgg;
+  const order=Object.keys(groups).sort((a,b)=>(a==='Другие корма')-(b==='Другие корма')||a.localeCompare(b,'ru'));
+  const cards=order.map(g=>{ const l=groups[g].sort((a,b)=>ppkOf(a)-ppkOf(b)), best=ppkOf(l[0]);
+    return `<article class="card"><div class="card-head"><h3>${esc(g)}</h3><span class="hint">${l.length} ${l.length===1?'вариант':'вар.'}</span></div>
+      <div class="tbl-wrap"><table><thead><tr><th>Мешок</th><th class="n">цена</th><th class="n">за 1 кг</th></tr></thead><tbody>
+      ${l.map((p,i)=>{ const k=ppkOf(p), more=best?(k/best-1)*100:0, inRation=p.feed&&S.feeds[p.feed]&&+S.feeds[p.feed].price===+p.price&&+S.feeds[p.feed].packKg===+p.kg;
+        return `<tr><td>${esc(p.name)}<span class="small">${esc(p.store)} · ${shortDate(p.date)}${perEgg[offerKey(p)]?` · корм на яйцо ≈ ${eur3(perEgg[offerKey(p)])}`:''}</span>
+          ${p.feed&&F[p.feed]?(inRation?'<span class="pill ok">в расчёте рациона</span>':`<button class="ghost" data-act="fc-use" data-k="${esc(offerKey(p))}" style="padding:2px 6px;font-size:12px">Считать рацион по этой цене</button>`):''}</td>
+          <td class="n">${eur2(p.price)}</td><td class="n"><strong>${eur3(k)}</strong><br>${i===0&&l.length>1?'<span class="pill ok">выгоднее всех</span>':i>0&&more>=0.5?`<span class="pill warn">+${fmt(more,0)}%</span>`:''}</td></tr>`; }).join('')}
+      </tbody></table></div></article>`; }).join('');
+  return `<section class="section"><div class="section-head"><h2>Купила корм</h2><span class="hint">запишется в «Учёт» и на склад</span></div>
+    <div class="card">${offers.length?`
+      <div class="form-grid">
+        <label class="f">Что купила<select id="fb-prod">${offerOptions(ui.fbProd||'')}<option value="new" ${ui.fbProd==='new'?'selected':''}>— другой корм (новый) —</option></select></label>
+        <label class="f">Сколько мешков<input id="fb-n" inputmode="decimal" value="1"></label>
+        <label class="f">Цена мешка, ${cur()}<input id="fb-price" inputmode="decimal" placeholder="как на ценнике"></label>
+        <label class="f">Вес мешка, кг<input id="fb-kg" inputmode="decimal" placeholder="как на ценнике"></label>
+      </div>
+      <div class="form-grid" id="fb-new">
+        <label class="f">Название нового корма<input id="fb-name" placeholder="только для «другого корма»"></label>
+        <label class="f">Магазин<select id="fb-store">${[...new Set([...storeList().map(z=>z.name),...offers.map(p=>p.store)])].map(n=>`<option ${n==='KG Latvija'?'selected':''}>${esc(n)}</option>`).join('')}</select></label>
+      </div>
+      <label class="row" style="font-size:14px"><input type="checkbox" id="fb-money" checked> Записать в «Учёт» (Хозяйство → Корм)</label>
+      <label class="row" style="font-size:14px"><input type="checkbox" id="fb-stock" checked> Добавить на склад (если корм есть в рационе)</label>
+      <div class="row"><button class="primary" data-act="fc-buy">Записать покупку</button></div>`:
+      '<p class="hint">Пока нет цен кормов с весом мешка. Добавьте магазин и цены во вкладке «Дом → Магазины».</p>'}
+    </div></section>
+    <section class="section"><div class="section-head"><h2>Какой корм выгоднее</h2><span class="hint">сравнение по цене за 1 кг</span></div>
+    ${st.all.perEgg?`<p class="hint" style="margin:0 0 8px">По «Дневнику корма» одно яйцо сейчас стоит ≈ <strong>${eur3(st.all.perEgg)}</strong> корма (${st.all.days} дн. с записью яиц).</p>`:'<p class="hint" style="margin:0 0 8px">Цена корма на одно яйцо появится, когда в «Дневнике корма» будут записи с яйцами.</p>'}
+    ${cards||''}</section>`;
+}
+
+function viewFeedDiary(){
+  const h=hensAnimal(), st=diaryStats(), offers=feedOffers();
+  const recent=live('feedLog').sort((a,b)=>b.date.localeCompare(a.date)||(b.updatedAt||0)-(a.updatedAt||0)).slice(0,40);
+  const name=(e)=>e.prod&&offerByKey(e.prod)?offerByKey(e.prod).name:(e.prodName||e.prod||'—');
+  const sum=st.list.map(s=>`<div style="padding:8px 0;border-bottom:1px solid var(--line,#eee)"><strong>${esc(s.name)}</strong>
+    <div class="hint">${s.entries} зап. · всего ${fmt(s.kg,1)} кг${s.avgStars?` · ${starTxt(s.avgStars)} (${fmt(s.avgStars,1)})`:''}</div>
+    <div>Яиц на курицу в день: <strong>${s.perHen!==null?fmt(s.perHen,2):'—'}</strong> · корм на 1 яйцо: <strong>${s.perEgg?eur3(s.perEgg):'—'}</strong></div></div>`).join('');
+  const rows=recent.map(e=>`<div class="card" style="padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:flex-start;justify-content:space-between"><strong style="flex:1;min-width:0">${shortDate(e.date)} · ${esc(name(e))}</strong>
+        ${ui.fdDel===e.id?`<span class="row"><button class="danger" data-act="fd-del-yes" data-id="${e.id}">Удалить</button><button data-act="fd-del-no">Отмена</button></span>`:`<button class="ghost" data-act="fd-del" data-id="${e.id}" aria-label="Удалить запись">✕</button>`}</div>
+      <div class="hint">${[+e.kg?fmt(e.kg,2)+' кг':'', +e.eggs?fmt(e.eggs,0)+' яиц':'', +e.hens?fmt(e.hens,0)+' кур':'', e.stars?starTxt(+e.stars):''].filter(Boolean).join(' · ')}</div>
+      ${e.cond?`<div class="small">Условия: ${esc(e.cond)}</div>`:''}${e.note?`<p style="margin:4px 0 0">${esc(e.note)}</p>`:''}
+    </div>`).join('');
+  return `<section class="section"><div class="section-head"><h2>Записать кормление</h2><span class="hint">сколько дала и что получилось</span></div>
+    <div class="card"><div class="form-grid">
+      <label class="f">Дата<input type="date" id="fd-date" value="${todayISO()}"></label>
+      <label class="f">Корм<select id="fd-prod">${offerOptions(ui.fdProd||'')}<option value="other">— другой (написать) —</option></select></label>
+      <label class="f">Другой корм<input id="fd-other" placeholder="например, картошка варёная"></label>
+      <label class="f">Дала корма, кг<input id="fd-kg" inputmode="decimal" placeholder="например, 1,2"></label>
+      <label class="f">Яиц собрала за день<input id="fd-eggs" inputmode="numeric" placeholder="шт"></label>
+      <label class="f">Кур сейчас<input id="fd-hens" inputmode="numeric" value="${h?esc(h.count):''}"></label>
+      <label class="f">Оценка корма<select id="fd-stars"><option value="">без оценки</option>${[5,4,3,2,1].map(n=>`<option value="${n}">${starTxt(n)}</option>`).join('')}</select></label>
+      <label class="f">Условия<input id="fd-cond" placeholder="мороз −10, линька, свет до 20:00"></label>
+    </div>
+    <label class="f">Отзыв, заметка<textarea id="fd-note" rows="2" placeholder="как ели, скорлупа, перо, что заметила"></textarea></label>
+    ${h?`<label class="row" style="font-size:14px"><input type="checkbox" id="fd-tolog" checked> Яйца записать и в «Журнал» (если за этот день там ещё нет)</label>`:''}
+    <div class="row"><button class="primary" data-act="fd-add">Записать</button></div>
+    ${offers.length?'':'<p class="hint">Цены кормов появятся в списке, когда они будут в «Магазинах» с весом мешка.</p>'}
+    <p class="hint" style="margin:6px 0 0">Если за день давали несколько кормов — запишите каждый отдельно, яйца достаточно указать один раз.</p></div></section>
+    ${sum?`<section class="section"><div class="section-head"><h2>Итог по кормам</h2><span class="hint">в дни, когда давали этот корм</span></div>
+      <div class="card">${sum}
+      <p class="hint" style="margin:6px 0 0">Сравнение честное, когда записей хотя бы 7–10 дней на каждый корм: яйценоскость меняется и от холода, света и линьки — поэтому пишите условия.</p></div></section>`:''}
+    <section class="section"><div class="section-head"><h2>Записи</h2></div>${rows||'<p class="hint">Записей пока нет.</p>'}</section>`;
+}
+
+function feedCheapAction(act,t){
+  const g=(id)=>document.getElementById(id);
+  if(act==='fc-use'){ const p=offerByKey(t.dataset.k); if(!p||!p.feed) return true; const st=S.feeds[p.feed]=S.feeds[p.feed]||{}; st.price=+p.price; st.packKg=+p.kg; save(); flash(`Рацион и склад теперь считаются по цене «${p.name}»: ${eur3(ppkOf(p))} за кг.`); return true; }
+  if(act==='fc-buy'){
+    const sel=g('fb-prod').value, n=num(g('fb-n').value)||1; let p=sel==='new'?null:offerByKey(sel);
+    const price=num(g('fb-price').value)||(p?+p.price:0), kg=num(g('fb-kg').value)||(p?+p.kg:0);
+    const nm=sel==='new'?String(g('fb-name').value||'').trim():p.name, store=sel==='new'?g('fb-store').value:p.store;
+    if(!nm||price<=0||kg<=0){ flash('Укажите корм, цену и вес мешка.'); return true; }
+    ui.fbProd=sel==='new'?store+'|'+normName(nm):sel;
+    // цена изменилась или корм новый — новая запись цены (старая остаётся в истории)
+    if(!p||+p.price!==price||+p.kg!==kg){ const np=touch({id:uid(), name:sel==='new'?normName(nm):p.name, store, price, kg, date:todayISO(), full:p?p.full||'':nm}); if(p&&p.feed) np.feed=p.feed; S.shopPrices.push(np); p=np; }
+    const total=r2(price*n), totKg=kg*n;
+    if(g('fb-money').checked) addMoney({type:'out', amount:total, sec:'farm', cat:'Корм', who:meId(), note:`${store}: ${p.name} × ${fmt(n,1)} (${fmt(totKg,0)} кг)`});
+    if(g('fb-stock').checked&&p.feed&&F[p.feed]){ const fid=p.feed, st=S.feeds[fid]=S.feeds[fid]||{}, daily=herdDaily(S.settings.includePlanned)[fid]||0;
+      const since=st.stockDate?Math.max(0,dayDiff(st.stockDate,todayISO())):0; st.stock=Math.round(Math.max(0,(+st.stock||0)-daily*since)+totKg); st.stockDate=todayISO(); }
+    const c=cheaperThan(p);
+    save(); flash(c?`Записано: ${money(total)}. Этот корм ${eur3(ppkOf(p))} за кг. Дешевле: «${c.name}» (${c.store}) — ${eur3(ppkOf(c))} за кг, на ${fmt(totKg,0)} кг было бы на ${money(r2((ppkOf(p)-ppkOf(c))*totKg))} дешевле.`:`Записано: ${money(total)}. Это самый выгодный вариант из известных: ${eur3(ppkOf(p))} за кг.`);
+    return true; }
+  if(act==='fd-add'){
+    const sel=g('fd-prod').value, other=String(g('fd-other').value||'').trim(), date=g('fd-date').value||todayISO();
+    const e={id:uid(), date, kg:num(g('fd-kg').value), eggs:Math.round(num(g('fd-eggs').value)), hens:Math.round(num(g('fd-hens').value)), stars:+g('fd-stars').value||0,
+      cond:String(g('fd-cond').value||'').trim().slice(0,200), note:String(g('fd-note').value||'').trim().slice(0,1000), who:meId()};
+    if(sel==='other'||other){ if(!other){ flash('Напишите, какой корм.'); return true; } e.prodName=other.slice(0,80); } else e.prod=sel;
+    if(!e.kg&&!e.eggs&&!e.note&&!e.stars){ flash('Заполните хотя бы корм в кг, яйца или отзыв.'); return true; }
+    ui.fdProd=e.prod||'';
+    S.feedLog.push(touch(e));
+    const h=hensAnimal(), tl=g('fd-tolog');
+    if(h&&tl&&tl.checked&&e.eggs>0&&!S.log.some(x=>x.an===h.id&&x.kind==='eggs'&&x.date===date)) S.log.push({id:uid(), date, an:h.id, kind:'eggs', v:e.eggs});
+    save(); flash('Записано в дневник корма.'); return true; }
+  if(act==='fd-del'){ ui.fdDel=t.dataset.id; render(); return true; }
+  if(act==='fd-del-no'){ ui.fdDel=null; render(); return true; }
+  if(act==='fd-del-yes'){ const e=S.feedLog.find(x=>x.id===t.dataset.id); if(e){ e.deleted=true; touch(e); } ui.fdDel=null; save(); render(); return true; }
+  return false;
 }
 
 /* ---------- Советы ---------- */
@@ -2393,6 +2554,7 @@ document.addEventListener('click',e=>{
   if(act==='todo-buy'){ const f=F[t.dataset.feed]; if(f){ newTask({title:'Купить: '+f.name.toLowerCase(), sec:'farm', due:todayISO()}); save(); note='Дело «Купить: '+f.name.toLowerCase()+'» добавлено на сегодня во вкладку «Дела».'; render(); setTimeout(()=>{ note=null; render(); },4000); } return; }
   if(act==='seed-ours'){ seedOurFarm(); return; }
   if(act==='stock-view'){ ui.stockView=t.dataset.v; render(); return; }
+  if(/^f[cd]-/.test(act||'')&&S&&feedCheapAction(act,t)) return;
   if(act==='req-open'){ ui.chat.req=true; render(); setTimeout(()=>{ const el=document.getElementById('req-text'); if(el) el.focus(); },40); return; }
   if(act==='req-close'){ ui.chat.req=false; render(); return; }
   if(act==='req-send'){ const v=(document.getElementById('req-text').value||'').trim(); if(!v) return; if(!S) S=blank();
