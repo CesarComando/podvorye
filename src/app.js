@@ -1577,7 +1577,10 @@ function heatSummary(){
 }
 
 /* ---------- Дом: счета, учёт, машина, покупки ---------- */
-const live=(k)=>((S&&S[k])||[]).filter(x=>!x.deleted);
+// Записи с пометкой onlyFor (личные траты, заправки) видит только тот, чей это id; остальные участники хозяйства — нет.
+const meId=()=>(session&&session.user&&session.user.id)||null;
+const mine=(x)=>!x.onlyFor||x.onlyFor===meId();
+const live=(k)=>((S&&S[k])||[]).filter(x=>!x.deleted&&mine(x));
 const touch=(x)=>{ x.updatedAt=Date.now(); return x; };
 const monthName=(ym)=>{ const s=new Date(ym+'-15T12:00:00').toLocaleDateString('ru-RU',{month:'long',year:'numeric'}); return s[0].toUpperCase()+s.slice(1); };
 const addMonthsISO=(iso,n)=>{ const d=new Date(iso+'T12:00:00'), day=d.getDate(); d.setDate(1); d.setMonth(d.getMonth()+n); d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate())); return isoOf(d); };
