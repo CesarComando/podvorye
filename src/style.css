@@ -253,3 +253,8 @@ td.nowrap{white-space:nowrap}
 .seg.modes button{min-height:44px;font-size:14px;line-height:1.15;padding:6px}
 .seg.modes button:last-child:nth-child(3n+1){grid-column:span 3}.seg.modes button:last-child:nth-child(3n+2){grid-column:span 2}
 .p-in{width:100%;min-width:0}td .p-in{padding:6px 8px;min-height:36px}
+/* смены: отметка в календаре и полоса в дне */
+.cal-d.sh{box-shadow:inset 0 -3px 0 var(--accent)}
+.cal-d.sh.sel{box-shadow:inset 0 -3px 0 var(--accent-ink)}
+.shift-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0;padding:8px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--accent);font-weight:600}
+.shift-bar.rest{border-color:var(--line);font-weight:400;color:var(--muted)}
