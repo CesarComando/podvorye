@@ -192,7 +192,7 @@ let saving=false, again=false, dirty=false, saveT=null, lastSaved=null, syncMsg=
 const ui={tab:'tasks', edit:{}, open:{}, confirmDel:null, period:null, opt:{}, jAnimal:null, jKind:null, confirmDelFeed:null, day:null, sec:'all', task:null};
 const LS='podvorye-rations-v1';
 
-function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[], removedAnimals:[]}; }
+function blank(){ return {v:1, animals:[], feeds:{}, settings:{feedings:2, period:'season', customDays:90, seasonEnd:'2027-05-01', includePlanned:false}, customFeeds:[], feedOverrides:{}, log:[], tasks:[], money:[], days:{}, bills:[], cars:[], fuel:[], shopItems:[], shopPrices:[], stores:[], requests:[], receipts:[], shifts:[], removedAnimals:[]}; }
 function normalize(d){
   const b=blank(); d=d&&typeof d==='object'?d:{};
   const obj=(x)=>x&&typeof x==='object'&&!Array.isArray(x)?x:{};
@@ -215,7 +215,7 @@ function normalize(d){
   return out;
 }
 // Списки, которые сливаются между телефонами по id и updatedAt (удаление — пометка deleted).
-const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests','receipts'];
+const SYNC_LISTS=['tasks','money','bills','cars','fuel','shopItems','shopPrices','stores','requests','receipts','shifts'];
 const markRation=(a)=>{ if(a) a.rationChanged=todayISO(); };
 const stable=(o)=>JSON.stringify(o,(k,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.keys(v).sort().reduce((r,k2)=>(r[k2]=v[k2],r),{}):v);
 const clone=(o)=>JSON.parse(JSON.stringify(o));
@@ -2046,10 +2046,50 @@ function attention(){
   return A;
 }
 
+// ---- Смены (сутки): общий график, видят оба ----
+// В списке shifts три вида записей: cycle — «сутки через N» с даты (start, step, until),
+// on — отдельная смена в день (обмен с коллегой), off — смена из графика снята в этот день.
+const dayNum=(iso)=>Math.round(Date.parse(iso+'T12:00:00Z')/864e5);
+function shiftWho(iso){
+  const L=live('shifts'), out=new Set();
+  for(const c of L) if(c.kind==='cycle'&&c.start&&c.step>0&&iso>=c.start&&(!c.until||iso<=c.until)&&(dayNum(iso)-dayNum(c.start))%c.step===0) out.add(c.who||'');
+  for(const x of L) if(x.kind==='off'&&x.date===iso) out.delete(x.who||'');
+  for(const x of L) if(x.kind==='on'&&x.date===iso) out.add(x.who||'');
+  return [...out];
+}
+const shiftWhoDefault=()=>{ const c=live('shifts').filter(x=>x.who).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0))[0]; return c?c.who:'Дайнис'; };
+const WD=['вс','пн','вт','ср','чт','пт','сб'];
+function shiftToggle(iso, who){
+  const on=shiftWho(iso).includes(who);
+  const same=live('shifts').filter(x=>(x.kind==='on'||x.kind==='off')&&x.date===iso&&(x.who||'')===who);
+  same.forEach(x=>{ x.deleted=true; x.updatedAt=Date.now(); });
+  if(shiftWho(iso).includes(who)===on) S.shifts.push(touch({id:uid(), kind:on?'off':'on', who, date:iso}));
+  save(); render();
+}
+function viewShifts(){
+  const today=todayISO(), who=shiftWhoDefault(), cyc=live('shifts').filter(x=>x.kind==='cycle').sort((a,b)=>a.start<b.start?-1:1);
+  const next=[]; for(let i=0,d=today;i<120&&next.length<14;i++,d=addDaysISO(d,1)) for(const w of shiftWho(d)) next.push([d,w]);
+  const ym=today.slice(0,7), dim=new Date(+ym.slice(0,4), +ym.slice(5,7), 0).getDate(); let n=0,tt=0;
+  for(let k=1;k<=dim;k++){ const d=ym+'-'+pad2(k), c=shiftWho(d).length; n+=c; if(c&&[2,4].includes(new Date(d+'T12:00:00').getDay())) tt+=c; }
+  const cur=cyc.filter(c=>!c.until||c.until>=today);
+  return `<section class="section"><div class="section-head"><h2>Смены</h2><span class="hint">в этом месяце ${n}${tt?`, из них на вт/чт ${tt}`:''}</span></div>
+    <div class="card">${cur.length?cur.map(c=>`<p style="margin:0 0 6px"><strong>${esc(c.who||'')}</strong>: сутки через ${c.step-1} с ${new Date(c.start+'T12:00:00').toLocaleDateString('ru-RU')}${c.until?` до ${new Date(c.until+'T12:00:00').toLocaleDateString('ru-RU')}`:''} <button class="ghost" data-act="shift-cyc-del" data-id="${c.id}">убрать</button></p>`).join(''):'<p class="hint" style="margin:0 0 6px">Графика пока нет.</p>'}
+      <div class="builder"><strong>Новый график</strong>
+        <div class="row"><input id="sh-who" value="${esc(who)}" placeholder="Кто" style="width:120px"><select id="sh-step">${[[2,'сутки через сутки'],[3,'сутки через двое'],[4,'сутки через трое']].map(([v,l])=>`<option value="${v}" ${v===4?'selected':''}>${l}</option>`).join('')}</select></div>
+        <div class="row"><label class="hint">первая смена <input type="date" id="sh-start" value="${today}"></label><button class="primary" data-act="shift-cyc">Сохранить график</button></div>
+        <p class="hint" style="margin:0">Старый график закончится за день до первой смены нового.</p></div></div></section>
+  <section class="section"><div class="section-head"><h2>Поменялся сменой</h2></div>
+    <div class="card"><div class="row"><input type="date" id="sh-date" value="${today}"><button data-act="shift-day">+ сутки в этот день</button></div>
+    <p class="hint" style="margin:0">Чтобы снять смену, нажмите «убрать» в списке ниже. В «Делах» смена видна в календаре и в выбранном дне.</p></div></section>
+  <section class="section"><div class="section-head"><h2>Ближайшие смены</h2></div><div class="card">
+    ${next.length?next.map(([d,w])=>{ const wd=new Date(d+'T12:00:00').getDay(), tr=wd===2||wd===4;
+      return `<div class="row" style="justify-content:space-between;padding:4px 0"><span>${tr?'<strong>':''}${WD[wd]}${tr?'</strong>':''}, ${new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'long'})}${cur.length>1||w!==who?' · '+esc(w):''}${tr?' <span class="pill warn">день тренировки</span>':''}</span><button class="ghost" data-act="shift-tog" data-d="${d}" data-w="${esc(w)}">убрать</button></div>`; }).join(''):'<p class="hint" style="margin:0">Ближайших смен нет.</p>'}
+  </div></section>`;
+}
 function viewHome(){
-  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['basket','Корзина'],['stores','Магазины'],['heat','Тепло']];
+  const v=ui.homeView||'bills', tabs=[['bills','Счета'],['money','Учёт'],['car','Машина'],['shop','Покупки'],['basket','Корзина'],['stores','Магазины'],['heat','Тепло'],['shifts','Смены']];
   return `<div class="subnav">${tabs.map(([k,l])=>`<button data-act="home-view" data-v="${k}" aria-pressed="${v===k}">${l}</button>`).join('')}</div>`+
-    ({bills:viewBills, money:()=>moneySwitch()+(ui.mView==='me'?viewMyBudget():viewMoney()), car:viewCar, shop:viewShop, basket:viewBasket, stores:viewStores, heat:viewHeat}[v]||viewBills)();
+    ({bills:viewBills, money:()=>moneySwitch()+(ui.mView==='me'?viewMyBudget():viewMoney()), car:viewCar, shop:viewShop, basket:viewBasket, stores:viewStores, heat:viewHeat, shifts:viewShifts}[v]||viewBills)();
 }
 // Хозяйство: всё про животных в одном месте
 const FARM_TABS=['ration','tips','stock','journal','herd'];
@@ -2175,10 +2215,13 @@ function monthGrid(){
   const has=new Set(liveTasks().filter(t=>!t.done&&t.due).map(t=>t.due)), cells=[];
   for(let i=0;i<first;i++) cells.push('<span></span>');
   for(let k=1;k<=days;k++){ const iso=base.slice(0,7)+'-'+pad2(k);
-    cells.push(`<button class="cal-d ${iso===todayISO()?'today':''} ${iso===ui.day?'sel':''}" data-act="day-go" data-d="${iso}">${k}${has.has(iso)?'<i></i>':''}</button>`); }
+    cells.push(`<button class="cal-d ${iso===todayISO()?'today':''} ${iso===ui.day?'sel':''} ${shiftWho(iso).length?'sh':''}" data-act="day-go" data-d="${iso}">${k}${has.has(iso)?'<i></i>':''}</button>`); }
   return `<div class="cal"><div class="cal-h"><button class="ghost" data-act="month" data-n="-1" aria-label="Прошлый месяц">‹</button><strong>${d0.toLocaleDateString('ru-RU',{month:'long',year:'numeric'})}</strong><button class="ghost" data-act="month" data-n="1" aria-label="Следующий месяц">›</button></div>
     <div class="cal-g">${['пн','вт','ср','чт','пт','сб','вс'].map(w=>`<span class="cal-w">${w}</span>`).join('')}${cells.join('')}</div></div>`;
 }
+const shiftBar=(day)=>{ const on=shiftWho(day), prev=shiftWho(addDaysISO(day,-1));
+  if(on.length) return `<div class="shift-bar"><span>Сутки · ${esc(on.join(', '))}</span><button class="ghost" data-act="go" data-go="home:shifts">график</button></div>`;
+  return prev.length?`<div class="shift-bar rest"><span>После суток · ${esc(prev.join(', '))} отдыхает</span></div>`:''; };
 function viewTasks(){
   const today=todayISO(), day=ui.day||today, isToday=day===today, sec=ui.sec;
   const all=liveTasks().filter(t=>sec==='all'||t.sec===sec);
@@ -2201,7 +2244,7 @@ function viewTasks(){
     <div class="day-nav"><button class="ghost big-btn" data-act="day-step" data-n="-1" aria-label="Предыдущий день">‹</button>
       <button class="day-title" data-act="cal-toggle">${esc(dayLabel(day))}${isToday?'':` <span class="hint">· ${new Date(day+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'})}</span>`}</button>
       <button class="ghost big-btn" data-act="day-step" data-n="1" aria-label="Следующий день">›</button></div>
-    ${ui.cal?monthGrid():''}${isToday?'':'<div class="row" style="justify-content:center"><button class="ghost" data-act="day-go" data-d="'+today+'">← к сегодняшнему дню</button></div>'}
+    ${shiftBar(day)}${ui.cal?monthGrid():''}${isToday?'':'<div class="row" style="justify-content:center"><button class="ghost" data-act="day-go" data-d="'+today+'">← к сегодняшнему дню</button></div>'}
     <div class="quick"><input id="qa" placeholder="Новое дело: «купить комбикорм завтра 10:00»" enterkeyhint="done" autocomplete="off"><button class="primary" data-act="qa-add" aria-label="Добавить дело">+</button></div>
     <div class="chips sec-chips">${[['all','Все'],...Object.entries(SECS)].map(([k,l])=>`<button class="chip-btn ${sec===k?'on':''}" data-act="sec" data-s="${k}">${l}</button>`).join('')}</div>
   </section>
@@ -2505,6 +2548,12 @@ document.addEventListener('click',e=>{
     if(!n){ if(nEl) nEl.focus(); return; }
     const ex=ownStores().find(z=>normName(z.name)===normName(n)); if(ex){ if(a){ ex.address=a; touch(ex); } } else S.stores.push(touch({id:uid(),name:n,address:a}));
     save(); render(); flash(ex?`${ex.name} уже есть${a?' — адрес обновлён':''}.`:`Магазин ${n} добавлен.`); return; }
+  if(act==='shift-tog'){ shiftToggle(t.dataset.d, t.dataset.w); return; }
+  if(act==='shift-day'){ const d=(document.getElementById('sh-date')||{}).value; if(!d) return; const w=shiftWhoDefault(); if(shiftWho(d).includes(w)){ flash('В этот день смена уже есть.'); return; } shiftToggle(d,w); flash('Смена добавлена.'); return; }
+  if(act==='shift-cyc'){ const g=(id)=>document.getElementById(id); const who=g('sh-who').value.trim()||'Дайнис', step=+g('sh-step').value, start=g('sh-start').value; if(!start||!(step>1)) return;
+    S.shifts=S.shifts||[]; for(const c of live('shifts').filter(x=>x.kind==='cycle'&&(x.who||'')===who)){ if(c.start>=start){ c.deleted=true; c.updatedAt=Date.now(); } else if(!c.until||c.until>=start){ c.until=addDaysISO(start,-1); c.updatedAt=Date.now(); } }
+    S.shifts.push(touch({id:uid(), kind:'cycle', who, step, start, until:null})); save(); render(); flash('График сохранён.'); return; }
+  if(act==='shift-cyc-del'){ const c=live('shifts').find(x=>x.id===t.dataset.id); if(c){ c.deleted=true; c.updatedAt=Date.now(); save(); render(); } return; }
   if(act==='store-add'){ const el=document.getElementById('sh-newstore'), n=el&&el.value.trim(); if(!n) return; if(!live('stores').length) S.stores=STORES_DEFAULT.map(x=>touch({id:uid(),name:x,address:''}));
     S.stores.push(touch({id:uid(),name:n,address:''})); ui.open.shopset=true; save(); render(); return; }
   if(act==='heat-dims'){ const g=(k)=>num(document.getElementById('ht-'+k).value); ui.dimW=g('w'); ui.dimD=g('d'); ui.dimH=g('h');
